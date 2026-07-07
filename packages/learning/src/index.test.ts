@@ -1,90 +1,174 @@
 import { describe, expect, it } from "vitest";
 import {
-  createLearningNotebook,
+  createSavedDictionary,
   createWordInsight,
-  forgetWord,
-  listSavedWords,
-  markWordState,
-  parseLearningNotebook,
-  saveWord,
-  serializeLearningNotebook,
-  updateWordExample,
-  updateWordNote
+  dictionaryLookupFailed,
+  dictionaryLookupNotFound,
+  dictionaryLookupReady,
+  forgetDictionaryEntry,
+  listSavedDictionaryEntries,
+  parseDictionaryApiResponse,
+  parseSavedDictionary,
+  primaryDefinition,
+  saveDictionaryEntry,
+  serializeSavedDictionary
 } from "./index";
 
-describe("word insight", () => {
-  it("returns fixture insight for known learner words", () => {
-    expect(createWordInsight("Cadence")).toMatchObject({
+const fetchedAt = "2026-01-01T00:00:00.000Z";
+
+describe("dictionary insight", () => {
+  it("parses definitions from the public dictionary API shape", () => {
+    const entry = parseDictionaryApiResponse(
+      "cadence",
+      [
+        {
+          word: "cadence",
+          phonetic: "/ˈkeɪdəns/",
+          phonetics: [
+            {
+              text: "/ˈkeɪdəns/",
+              audio: "//example.test/cadence.mp3"
+            }
+          ],
+          meanings: [
+            {
+              partOfSpeech: "noun",
+              definitions: [
+                {
+                  definition: "The rhythm or flow of a sequence of sounds or words.",
+                  example: "The narrator's cadence slowed near the comma.",
+                  synonyms: ["rhythm"],
+                  antonyms: []
+                }
+              ]
+            }
+          ],
+          sourceUrls: ["https://en.wiktionary.org/wiki/cadence"]
+        }
+      ],
+      fetchedAt
+    );
+
+    expect(entry).toMatchObject({
       key: "cadence",
-      translation: "cadence",
-      saved: false,
-      state: "learning"
+      word: "cadence",
+      phonetic: "/ˈkeɪdəns/",
+      audioUrl: "https://example.test/cadence.mp3",
+      fetchedAt
     });
+    expect(primaryDefinition(entry)?.definition).toBe(
+      "The rhythm or flow of a sequence of sounds or words."
+    );
   });
 
-  it("falls back without pretending to know a word", () => {
+  it("returns null for dictionary responses without definitions", () => {
+    expect(parseDictionaryApiResponse("zzzz", { title: "No Definitions Found" })).toBeNull();
+    expect(parseDictionaryApiResponse("zzzz", [{ word: "zzzz", meanings: [] }])).toBeNull();
+  });
+
+  it("composes loading, not-found, and error states without pretending to know", () => {
     expect(createWordInsight("rainfall")).toMatchObject({
-      surface: "rainfall",
-      definition: "No saved meaning yet.",
-      state: "unknown"
-    });
-  });
-
-  it("saves words and lets learner state change without losing notes", () => {
-    const saved = saveWord(createLearningNotebook(), "Attentive", "learning", "2026-01-01");
-    const noted = updateWordNote(saved, "attentive", "Shows up in narration.", "2026-01-02");
-    const known = markWordState(noted, "attentive", "known", "2026-01-03");
-
-    expect(createWordInsight("attentive", known)).toMatchObject({
-      saved: true,
-      state: "known",
-      note: "Shows up in narration."
-    });
-  });
-
-  it("stores learner examples separately from catalog examples", () => {
-    const notebook = updateWordExample(
-      createLearningNotebook(),
-      "cadence",
-      "Her cadence slowed near the comma.",
-      "2026-01-01"
-    );
-
-    expect(createWordInsight("cadence", notebook).example).toBe(
-      "Her cadence slowed near the comma."
-    );
-  });
-
-  it("lists saved words by latest update", () => {
-    const notebook = markWordState(
-      saveWord(createLearningNotebook(), "margin", "learning", "2026-01-01"),
-      "cadence",
-      "known",
-      "2026-01-02"
-    );
-
-    expect(listSavedWords(notebook).map((word) => word.surface)).toEqual(["cadence", "margin"]);
-  });
-
-  it("can forget a saved word", () => {
-    const notebook = forgetWord(saveWord(createLearningNotebook(), "margin"), "margin");
-
-    expect(createWordInsight("margin", notebook)).toMatchObject({
+      key: "rainfall",
+      status: "idle",
       saved: false,
-      state: "known"
+      entry: null
     });
-    expect(listSavedWords(notebook)).toEqual([]);
+    expect(
+      createWordInsight("rainfall", createSavedDictionary(), dictionaryLookupNotFound("rainfall"))
+    ).toMatchObject({
+      status: "not-found",
+      message: 'No dictionary definition found for "rainfall".'
+    });
+    expect(
+      createWordInsight("rainfall", createSavedDictionary(), dictionaryLookupFailed())
+    ).toMatchObject({
+      status: "error",
+      message: "Dictionary lookup needs attention. Please try again."
+    });
+  });
+
+  it("saves entries so future insight can skip remote lookup", () => {
+    const entry = parseDictionaryApiResponse(
+      "margin",
+      [
+        {
+          word: "margin",
+          meanings: [
+            {
+              partOfSpeech: "noun",
+              definitions: [{ definition: "The edge or border of something." }]
+            }
+          ]
+        }
+      ],
+      fetchedAt
+    );
+    if (entry == null) throw new Error("entry should parse");
+
+    const saved = saveDictionaryEntry(createSavedDictionary(), entry, "2026-01-02T00:00:00.000Z");
+    const lookup = dictionaryLookupReady({
+      ...entry,
+      meanings: []
+    });
+
+    expect(createWordInsight("margin", saved, lookup)).toMatchObject({
+      status: "ready",
+      saved: true,
+      entry: {
+        meanings: [
+          {
+            partOfSpeech: "noun"
+          }
+        ]
+      }
+    });
+    expect(listSavedDictionaryEntries(saved).map((word) => word.surface)).toEqual(["margin"]);
+  });
+
+  it("forgets saved entries", () => {
+    const entry = parseDictionaryApiResponse(
+      "margin",
+      [
+        {
+          word: "margin",
+          meanings: [
+            {
+              partOfSpeech: "noun",
+              definitions: [{ definition: "The edge or border of something." }]
+            }
+          ]
+        }
+      ],
+      fetchedAt
+    );
+    if (entry == null) throw new Error("entry should parse");
+
+    const saved = saveDictionaryEntry(createSavedDictionary(), entry);
+
+    expect(listSavedDictionaryEntries(forgetDictionaryEntry(saved, "margin"))).toEqual([]);
   });
 
   it("serializes defensively for app storage", () => {
-    const notebook = updateWordNote(
-      saveWord(createLearningNotebook(), "cadence", "learning", "2026-01-01"),
+    const entry = parseDictionaryApiResponse(
       "cadence",
-      "Rhythm of the sentence.",
-      "2026-01-02"
+      [
+        {
+          word: "cadence",
+          meanings: [
+            {
+              partOfSpeech: "noun",
+              definitions: [{ definition: "A rhythmic sequence." }]
+            }
+          ]
+        }
+      ],
+      fetchedAt
     );
+    if (entry == null) throw new Error("entry should parse");
 
-    expect(parseLearningNotebook(serializeLearningNotebook(notebook))).toEqual(notebook);
-    expect(parseLearningNotebook("{ absolutely not json")).toEqual(createLearningNotebook());
+    const saved = saveDictionaryEntry(createSavedDictionary(), entry, "2026-01-02T00:00:00.000Z");
+
+    expect(parseSavedDictionary(serializeSavedDictionary(saved))).toEqual(saved);
+    expect(parseSavedDictionary("{ nope")).toEqual(createSavedDictionary());
   });
 });

@@ -1,210 +1,214 @@
-export type WordLearningState = "unknown" | "learning" | "known";
+export type DictionaryLookupStatus = "idle" | "loading" | "ready" | "not-found" | "error";
+
+export interface DictionaryDefinition {
+  definition: string;
+  example: string | null;
+  synonyms: string[];
+  antonyms: string[];
+}
+
+export interface DictionaryMeaning {
+  partOfSpeech: string;
+  definitions: DictionaryDefinition[];
+}
+
+export interface DictionaryEntry {
+  key: string;
+  surface: string;
+  word: string;
+  phonetic: string | null;
+  audioUrl: string | null;
+  meanings: DictionaryMeaning[];
+  sourceUrl: string;
+  fetchedAt: string;
+}
+
+export interface SavedDictionaryEntry extends DictionaryEntry {
+  savedAt: string;
+}
+
+export interface SavedDictionary {
+  entries: Record<string, SavedDictionaryEntry>;
+}
+
+export interface DictionaryLookupResult {
+  status: DictionaryLookupStatus;
+  entry: DictionaryEntry | null;
+  message: string | null;
+}
 
 export interface WordInsight {
   key: string;
   surface: string;
-  definition: string | null;
-  translation: string | null;
-  partOfSpeech: string | null;
-  example: string | null;
-  note: string | null;
-  state: WordLearningState;
+  status: DictionaryLookupStatus;
+  entry: DictionaryEntry | null;
   saved: boolean;
+  message: string | null;
 }
 
-export interface SavedWord {
-  key: string;
-  surface: string;
-  state: Exclude<WordLearningState, "unknown">;
-  note: string | null;
-  example: string | null;
-  createdAt: string;
-  updatedAt: string;
+interface DictionaryApiEntry {
+  word?: unknown;
+  phonetic?: unknown;
+  phonetics?: unknown;
+  meanings?: unknown;
+  sourceUrls?: unknown;
 }
 
-export interface LearningNotebook {
-  words: Record<string, SavedWord>;
+interface DictionaryApiMeaning {
+  partOfSpeech?: unknown;
+  definitions?: unknown;
 }
 
-export type WordInsightCatalog = Record<string, Omit<WordInsight, "surface">>;
+interface DictionaryApiDefinition {
+  definition?: unknown;
+  example?: unknown;
+  synonyms?: unknown;
+  antonyms?: unknown;
+}
 
-const fixtureCatalog: WordInsightCatalog = {
-  attentive: {
-    key: "attentive",
-    definition: "carefully focused on something.",
-    translation: "attentif",
-    partOfSpeech: "adjective",
-    example: "She stayed attentive while the narrator changed pace.",
-    note: null,
-    state: "learning",
-    saved: false
-  },
-  cadence: {
-    key: "cadence",
-    definition: "the rhythm or flow of a voice, sentence, or movement.",
-    translation: "cadence",
-    partOfSpeech: "noun",
-    example: "The cadence made the paragraph easier to follow.",
-    note: null,
-    state: "learning",
-    saved: false
-  },
-  margin: {
-    key: "margin",
-    definition: "a quiet edge or open space around the main text.",
-    translation: "marge",
-    partOfSpeech: "noun",
-    example: "The note sat in the margin beside the paragraph.",
-    note: null,
-    state: "known",
-    saved: false
-  },
-  unfamiliar: {
-    key: "unfamiliar",
-    definition: "not known yet; new enough to deserve attention.",
-    translation: "inconnu",
-    partOfSpeech: "adjective",
-    example: "An unfamiliar word can be inspected without leaving the page.",
-    note: null,
-    state: "unknown",
-    saved: false
-  }
-};
+interface DictionaryApiPhonetic {
+  text?: unknown;
+  audio?: unknown;
+}
 
-export function createLearningNotebook(words: Record<string, SavedWord> = {}): LearningNotebook {
-  return { words: { ...words } };
+export function createSavedDictionary(
+  entries: Record<string, SavedDictionaryEntry> = {}
+): SavedDictionary {
+  return { entries: { ...entries } };
 }
 
 export function createWordInsight(
   surface: string,
-  notebook: LearningNotebook = createLearningNotebook(),
-  catalog = fixtureCatalog
+  savedDictionary: SavedDictionary = createSavedDictionary(),
+  lookup: DictionaryLookupResult | null = null
 ): WordInsight {
-  const normalized = normalizeInsightKey(surface);
-  const savedWord = notebook.words[normalized];
-  const entry = catalog[normalized];
+  const key = normalizeInsightKey(surface);
+  const savedEntry = savedDictionary.entries[key];
+  if (savedEntry != null) {
+    return {
+      key,
+      surface,
+      status: "ready",
+      entry: savedEntry,
+      saved: true,
+      message: null
+    };
+  }
 
   return {
-    key: normalized,
+    key,
     surface,
-    definition: entry?.definition ?? "No saved meaning yet.",
-    translation: entry?.translation ?? null,
-    partOfSpeech: entry?.partOfSpeech ?? null,
-    example: savedWord?.example ?? entry?.example ?? null,
-    note: savedWord?.note ?? entry?.note ?? null,
-    state: savedWord?.state ?? entry?.state ?? "unknown",
-    saved: savedWord != null ? true : (entry?.saved ?? false)
+    status: lookup?.status ?? "idle",
+    entry: lookup?.entry ?? null,
+    saved: false,
+    message: lookup?.message ?? null
   };
 }
 
-export function saveWord(
-  notebook: LearningNotebook,
+export function loadingDictionaryLookup(): DictionaryLookupResult {
+  return {
+    status: "loading",
+    entry: null,
+    message: "Looking up definition..."
+  };
+}
+
+export function dictionaryLookupReady(entry: DictionaryEntry): DictionaryLookupResult {
+  return {
+    status: "ready",
+    entry,
+    message: null
+  };
+}
+
+export function dictionaryLookupNotFound(surface: string): DictionaryLookupResult {
+  return {
+    status: "not-found",
+    entry: null,
+    message: `No dictionary definition found for "${surface}".`
+  };
+}
+
+export function dictionaryLookupFailed(): DictionaryLookupResult {
+  return {
+    status: "error",
+    entry: null,
+    message: "Dictionary lookup needs attention. Please try again."
+  };
+}
+
+export function saveDictionaryEntry(
+  savedDictionary: SavedDictionary,
+  entry: DictionaryEntry,
+  savedAt = new Date().toISOString()
+): SavedDictionary {
+  return {
+    entries: {
+      ...savedDictionary.entries,
+      [entry.key]: {
+        ...entry,
+        savedAt
+      }
+    }
+  };
+}
+
+export function forgetDictionaryEntry(
+  savedDictionary: SavedDictionary,
+  surface: string
+): SavedDictionary {
+  const key = normalizeInsightKey(surface);
+  if (savedDictionary.entries[key] == null) return savedDictionary;
+
+  const { [key]: _forgotten, ...entries } = savedDictionary.entries;
+  return { entries };
+}
+
+export function listSavedDictionaryEntries(
+  savedDictionary: SavedDictionary
+): SavedDictionaryEntry[] {
+  return Object.values(savedDictionary.entries).sort((first, second) => {
+    const saved = second.savedAt.localeCompare(first.savedAt);
+    return saved === 0 ? first.surface.localeCompare(second.surface) : saved;
+  });
+}
+
+export function parseDictionaryApiResponse(
   surface: string,
-  state: Exclude<WordLearningState, "unknown"> = "learning",
-  now = new Date().toISOString()
-): LearningNotebook {
-  const key = normalizeInsightKey(surface);
-  if (key.length === 0) return notebook;
+  payload: unknown,
+  fetchedAt = new Date().toISOString()
+): DictionaryEntry | null {
+  if (!Array.isArray(payload)) return null;
 
-  const existing = notebook.words[key];
-  return upsertWord(notebook, key, {
-    key,
-    surface: existing?.surface ?? surface,
-    state: existing?.state ?? state,
-    note: existing?.note ?? null,
-    example: existing?.example ?? null,
-    createdAt: existing?.createdAt ?? now,
-    updatedAt: now
-  });
+  const entries = payload
+    .map((item) => parseApiEntry(surface, item, fetchedAt))
+    .filter((entry): entry is DictionaryEntry => entry != null);
+  const firstWithDefinitions = entries.find((entry) => entry.meanings.length > 0);
+
+  return firstWithDefinitions ?? null;
 }
 
-export function markWordState(
-  notebook: LearningNotebook,
-  surface: string,
-  state: Exclude<WordLearningState, "unknown">,
-  now = new Date().toISOString()
-): LearningNotebook {
-  const key = normalizeInsightKey(surface);
-  if (key.length === 0) return notebook;
-
-  const existing = notebook.words[key];
-  return upsertWord(notebook, key, {
-    key,
-    surface: existing?.surface ?? surface,
-    state,
-    note: existing?.note ?? null,
-    example: existing?.example ?? null,
-    createdAt: existing?.createdAt ?? now,
-    updatedAt: now
-  });
+export function serializeSavedDictionary(savedDictionary: SavedDictionary): string {
+  return JSON.stringify({ entries: savedDictionary.entries });
 }
 
-export function updateWordNote(
-  notebook: LearningNotebook,
-  surface: string,
-  note: string,
-  now = new Date().toISOString()
-): LearningNotebook {
-  const key = normalizeInsightKey(surface);
-  if (key.length === 0) return notebook;
-
-  const word = ensureSavedWord(notebook, surface, now);
-  return upsertWord(notebook, key, {
-    ...word,
-    note: cleanOptionalText(note),
-    updatedAt: now
-  });
-}
-
-export function updateWordExample(
-  notebook: LearningNotebook,
-  surface: string,
-  example: string,
-  now = new Date().toISOString()
-): LearningNotebook {
-  const key = normalizeInsightKey(surface);
-  if (key.length === 0) return notebook;
-
-  const word = ensureSavedWord(notebook, surface, now);
-  return upsertWord(notebook, key, {
-    ...word,
-    example: cleanOptionalText(example),
-    updatedAt: now
-  });
-}
-
-export function forgetWord(notebook: LearningNotebook, surface: string): LearningNotebook {
-  const key = normalizeInsightKey(surface);
-  if (notebook.words[key] == null) return notebook;
-
-  const { [key]: _forgotten, ...words } = notebook.words;
-  return { words };
-}
-
-export function listSavedWords(notebook: LearningNotebook): SavedWord[] {
-  return Object.values(notebook.words).sort((first, second) => {
-    const updated = second.updatedAt.localeCompare(first.updatedAt);
-    return updated === 0 ? first.surface.localeCompare(second.surface) : updated;
-  });
-}
-
-export function serializeLearningNotebook(notebook: LearningNotebook): string {
-  return JSON.stringify({ words: notebook.words });
-}
-
-export function parseLearningNotebook(value: string | null): LearningNotebook {
-  if (value == null || value.trim().length === 0) return createLearningNotebook();
+export function parseSavedDictionary(value: string | null): SavedDictionary {
+  if (value == null || value.trim().length === 0) return createSavedDictionary();
 
   try {
-    const parsed = JSON.parse(value) as Partial<LearningNotebook>;
-    if (parsed == null || typeof parsed !== "object" || parsed.words == null) {
-      return createLearningNotebook();
+    const parsed = JSON.parse(value) as Partial<SavedDictionary>;
+    if (parsed == null || typeof parsed !== "object" || parsed.entries == null) {
+      return createSavedDictionary();
     }
 
-    return createLearningNotebook(normalizeSavedWords(parsed.words));
+    return createSavedDictionary(normalizeSavedEntries(parsed.entries));
   } catch {
-    return createLearningNotebook();
+    return createSavedDictionary();
   }
+}
+
+export function primaryDefinition(entry: DictionaryEntry | null): DictionaryDefinition | null {
+  return entry?.meanings[0]?.definitions[0] ?? null;
 }
 
 export function normalizeInsightKey(surface: string): string {
@@ -214,46 +218,121 @@ export function normalizeInsightKey(surface: string): string {
     .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
 }
 
-function ensureSavedWord(notebook: LearningNotebook, surface: string, now: string): SavedWord {
-  const savedNotebook = saveWord(notebook, surface, "learning", now);
-  const key = normalizeInsightKey(surface);
-  return savedNotebook.words[key];
-}
+function parseApiEntry(surface: string, item: unknown, fetchedAt: string): DictionaryEntry | null {
+  if (item == null || typeof item !== "object") return null;
 
-function upsertWord(notebook: LearningNotebook, key: string, word: SavedWord): LearningNotebook {
+  const apiEntry = item as DictionaryApiEntry;
+  const word = readString(apiEntry.word) ?? surface;
+  const key = normalizeInsightKey(surface);
+  if (key.length === 0) return null;
+
+  const phonetics = readArray(apiEntry.phonetics)
+    .map((phonetic) => parsePhonetic(phonetic))
+    .filter((phonetic): phonetic is DictionaryApiPhonetic => phonetic != null);
+  const phoneticText =
+    readString(apiEntry.phonetic) ??
+    phonetics.map((phonetic) => readString(phonetic.text)).find(Boolean) ??
+    null;
+  const audioUrl = phonetics
+    .map((phonetic) => normalizeAudioUrl(readString(phonetic.audio)))
+    .find((audio): audio is string => audio != null);
+
   return {
-    words: {
-      ...notebook.words,
-      [key]: word
-    }
+    key,
+    surface,
+    word,
+    phonetic: phoneticText,
+    audioUrl: audioUrl ?? null,
+    meanings: readArray(apiEntry.meanings)
+      .map((meaning) => parseMeaning(meaning))
+      .filter((meaning): meaning is DictionaryMeaning => meaning != null),
+    sourceUrl: readArray(apiEntry.sourceUrls).map(readString).find(Boolean) ?? "",
+    fetchedAt
   };
 }
 
-function cleanOptionalText(value: string): string | null {
-  const clean = value.trim();
-  return clean.length > 0 ? clean : null;
+function parseMeaning(item: unknown): DictionaryMeaning | null {
+  if (item == null || typeof item !== "object") return null;
+
+  const meaning = item as DictionaryApiMeaning;
+  const partOfSpeech = readString(meaning.partOfSpeech);
+  const definitions = readArray(meaning.definitions)
+    .map((definition) => parseDefinition(definition))
+    .filter((definition): definition is DictionaryDefinition => definition != null);
+
+  if (partOfSpeech == null || definitions.length === 0) return null;
+
+  return {
+    partOfSpeech,
+    definitions
+  };
 }
 
-function normalizeSavedWords(words: unknown): Record<string, SavedWord> {
-  if (words == null || typeof words !== "object") return {};
+function parseDefinition(item: unknown): DictionaryDefinition | null {
+  if (item == null || typeof item !== "object") return null;
 
-  return Object.entries(words as Record<string, Partial<SavedWord>>).reduce(
-    (normalized, [rawKey, word]) => {
-      const key = normalizeInsightKey(word.surface ?? rawKey);
-      if (key.length === 0 || word.surface == null) return normalized;
+  const definition = item as DictionaryApiDefinition;
+  const text = readString(definition.definition);
+  if (text == null) return null;
+
+  return {
+    definition: text,
+    example: readString(definition.example),
+    synonyms: readStringArray(definition.synonyms),
+    antonyms: readStringArray(definition.antonyms)
+  };
+}
+
+function parsePhonetic(item: unknown): DictionaryApiPhonetic | null {
+  if (item == null || typeof item !== "object") return null;
+  return item as DictionaryApiPhonetic;
+}
+
+function normalizeSavedEntries(entries: unknown): Record<string, SavedDictionaryEntry> {
+  if (entries == null || typeof entries !== "object") return {};
+
+  return Object.entries(entries as Record<string, Partial<SavedDictionaryEntry>>).reduce(
+    (normalized, [rawKey, entry]) => {
+      const surface = readString(entry.surface) ?? rawKey;
+      const key = normalizeInsightKey(surface);
+      if (key.length === 0 || !Array.isArray(entry.meanings)) return normalized;
 
       normalized[key] = {
         key,
-        surface: word.surface,
-        state: word.state === "known" ? "known" : "learning",
-        note: typeof word.note === "string" ? cleanOptionalText(word.note) : null,
-        example: typeof word.example === "string" ? cleanOptionalText(word.example) : null,
-        createdAt: word.createdAt ?? word.updatedAt ?? new Date(0).toISOString(),
-        updatedAt: word.updatedAt ?? word.createdAt ?? new Date(0).toISOString()
+        surface,
+        word: readString(entry.word) ?? surface,
+        phonetic: readString(entry.phonetic),
+        audioUrl: readString(entry.audioUrl),
+        meanings: entry.meanings,
+        sourceUrl: readString(entry.sourceUrl) ?? "",
+        fetchedAt: readString(entry.fetchedAt) ?? new Date(0).toISOString(),
+        savedAt:
+          readString(entry.savedAt) ?? readString(entry.fetchedAt) ?? new Date(0).toISOString()
       };
 
       return normalized;
     },
-    {} as Record<string, SavedWord>
+    {} as Record<string, SavedDictionaryEntry>
   );
+}
+
+function readArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function readStringArray(value: unknown): string[] {
+  return readArray(value).filter((item): item is string => typeof item === "string");
+}
+
+function readString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+
+  const clean = value.trim();
+  return clean.length > 0 ? clean : null;
+}
+
+function normalizeAudioUrl(value: string | null): string | null {
+  if (value == null) return null;
+  if (value.startsWith("//")) return `https:${value}`;
+  return value;
 }

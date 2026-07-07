@@ -11,22 +11,24 @@ import {
 } from "@readex/reader";
 import type { SentenceNarration, SentenceNarrationRequest } from "@readex/audio";
 import {
-  createLearningNotebook,
   createWordInsight,
-  forgetWord,
-  listSavedWords,
-  markWordState,
-  saveWord,
-  updateWordExample,
-  updateWordNote,
-  type LearningNotebook,
-  type SavedWord,
-  type WordInsight,
-  type WordLearningState
+  dictionaryLookupFailed,
+  dictionaryLookupNotFound,
+  dictionaryLookupReady,
+  forgetDictionaryEntry,
+  listSavedDictionaryEntries,
+  loadingDictionaryLookup,
+  normalizeInsightKey,
+  primaryDefinition,
+  saveDictionaryEntry,
+  type DictionaryLookupResult,
+  type SavedDictionary,
+  type SavedDictionaryEntry,
+  type WordInsight
 } from "@readex/learning";
 import type { ReaderTextToken } from "@readex/text";
 import { createNarrationRepository, toFriendlyNarrationError } from "../audio/narration-repository";
-import { createLearningRepository } from "../learning/learning-repository";
+import { createDictionaryRepository } from "../learning/dictionary-repository";
 import {
   createBookRepository,
   toFriendlyLibraryError,
@@ -49,7 +51,7 @@ interface SelectedWord {
 export function ReaderExperience() {
   const repository = createBookRepository();
   const narrationRepository = createNarrationRepository();
-  const learningRepository = createLearningRepository();
+  const dictionaryRepository = createDictionaryRepository();
   const sampleReader = buildFixtureReaderView();
   const [reader, setReader] = createSignal<ReaderView>(sampleReader);
   const [libraryBooks, setLibraryBooks] = createSignal<LibraryBookSummary[]>([]);
@@ -59,8 +61,12 @@ export function ReaderExperience() {
   const [activeNarration, setActiveNarration] = createSignal<SentenceNarration | null>(null);
   const [isPreparingNarration, setIsPreparingNarration] = createSignal(false);
   const [narrationNotice, setNarrationNotice] = createSignal<string | null>(null);
-  const [learningNotebook, setLearningNotebook] =
-    createSignal<LearningNotebook>(createLearningNotebook());
+  const [savedDictionary, setSavedDictionary] = createSignal<SavedDictionary>(
+    dictionaryRepository.loadSavedDictionary()
+  );
+  const [dictionaryLookups, setDictionaryLookups] = createSignal<
+    Record<string, DictionaryLookupResult>
+  >({});
   const [selectedWord, setSelectedWord] = createSignal<SelectedWord | null>(null);
   let activeHtmlAudio: HTMLAudioElement | null = null;
   let narrationRun = 0;
@@ -71,9 +77,14 @@ export function ReaderExperience() {
     const selection = selectedWord();
     if (selection == null) return null;
 
-    return createWordInsight(selection.surface, learningNotebook());
+    const key = normalizeInsightKey(selection.surface);
+    return createWordInsight(
+      selection.surface,
+      savedDictionary(),
+      dictionaryLookups()[key] ?? null
+    );
   });
-  const savedWords = createMemo(() => listSavedWords(learningNotebook()));
+  const savedWords = createMemo(() => listSavedDictionaryEntries(savedDictionary()));
   const statusLabel = createMemo(() => {
     if (isPreparingNarration()) return "Preparing audio";
     if (narrationNotice() != null) return "Needs attention";
@@ -98,7 +109,6 @@ export function ReaderExperience() {
   });
 
   onMount(() => {
-    setLearningNotebook(learningRepository.loadNotebook());
     void refreshLibrary();
   });
 
@@ -172,6 +182,7 @@ export function ReaderExperience() {
     sentence: ReaderSentenceView,
     token: Extract<ReaderTextToken, { kind: "word" }>
   ) => {
+    void lookupDictionaryWord(token.text);
     setSelectedWord({
       sentenceId: sentence.id,
       tokenIndex: token.index,
@@ -179,7 +190,7 @@ export function ReaderExperience() {
     });
   };
 
-  const selectSavedWord = (word: SavedWord) => {
+  const selectSavedWord = (word: SavedDictionaryEntry) => {
     setSelectedWord({
       sentenceId: "saved-words",
       tokenIndex: -1,
@@ -192,29 +203,41 @@ export function ReaderExperience() {
     selectedWord()?.sentenceId === sentenceId &&
     selectedWord()?.tokenIndex === token.index;
 
-  const persistLearningNotebook = (nextNotebook: LearningNotebook) => {
-    setLearningNotebook(nextNotebook);
-    learningRepository.saveNotebook(nextNotebook);
+  const lookupDictionaryWord = async (surface: string) => {
+    const key = normalizeInsightKey(surface);
+    if (key.length === 0 || savedDictionary().entries[key] != null) return;
+
+    setDictionaryLookups((current) => ({
+      ...current,
+      [key]: loadingDictionaryLookup()
+    }));
+
+    try {
+      const entry = await dictionaryRepository.lookupWord(surface);
+      setDictionaryLookups((current) => ({
+        ...current,
+        [key]: entry == null ? dictionaryLookupNotFound(surface) : dictionaryLookupReady(entry)
+      }));
+    } catch {
+      setDictionaryLookups((current) => ({
+        ...current,
+        [key]: dictionaryLookupFailed()
+      }));
+    }
   };
 
-  const saveLearningWord = (surface: string) => {
-    persistLearningNotebook(saveWord(learningNotebook(), surface));
+  const persistSavedDictionary = (nextDictionary: SavedDictionary) => {
+    setSavedDictionary(nextDictionary);
+    dictionaryRepository.saveSavedDictionary(nextDictionary);
   };
 
-  const markLearningWord = (surface: string, state: Exclude<WordLearningState, "unknown">) => {
-    persistLearningNotebook(markWordState(learningNotebook(), surface, state));
+  const saveDictionaryWord = (insight: WordInsight) => {
+    if (insight.entry == null) return;
+    persistSavedDictionary(saveDictionaryEntry(savedDictionary(), insight.entry));
   };
 
-  const changeWordNote = (surface: string, note: string) => {
-    persistLearningNotebook(updateWordNote(learningNotebook(), surface, note));
-  };
-
-  const changeWordExample = (surface: string, example: string) => {
-    persistLearningNotebook(updateWordExample(learningNotebook(), surface, example));
-  };
-
-  const forgetLearningWord = (surface: string) => {
-    persistLearningNotebook(forgetWord(learningNotebook(), surface));
+  const forgetSavedWord = (surface: string) => {
+    persistSavedDictionary(forgetDictionaryEntry(savedDictionary(), surface));
   };
 
   const activateReader = (nextReader: ReaderView) => {
@@ -396,8 +419,7 @@ export function ReaderExperience() {
                         insight={isSelectedWord(sentence.id, token) ? activeWordInsight() : null}
                         onSelect={selectWord}
                         onClear={() => setSelectedWord(null)}
-                        onSave={saveLearningWord}
-                        onMark={markLearningWord}
+                        onSave={saveDictionaryWord}
                       />
                     )}
                   </For>
@@ -411,11 +433,8 @@ export function ReaderExperience() {
       <WordInspector
         insight={activeWordInsight()}
         savedWords={savedWords()}
-        onSave={saveLearningWord}
-        onMark={markLearningWord}
-        onNoteChange={changeWordNote}
-        onExampleChange={changeWordExample}
-        onForget={forgetLearningWord}
+        onSave={saveDictionaryWord}
+        onForget={forgetSavedWord}
         onSelectSavedWord={selectSavedWord}
       />
 
@@ -511,8 +530,7 @@ interface SentenceTokenProps {
     token: Extract<ReaderTextToken, { kind: "word" }>
   ) => void;
   onClear: () => void;
-  onSave: (surface: string) => void;
-  onMark: (surface: string, state: Exclude<WordLearningState, "unknown">) => void;
+  onSave: (insight: WordInsight) => void;
 }
 
 function SentenceToken(props: SentenceTokenProps) {
@@ -538,12 +556,7 @@ function SentenceToken(props: SentenceTokenProps) {
       </button>
       <Show when={props.selected ? props.insight : null}>
         {(insight) => (
-          <WordPopover
-            insight={insight()}
-            onClear={props.onClear}
-            onSave={props.onSave}
-            onMark={props.onMark}
-          />
+          <WordPopover insight={insight()} onClear={props.onClear} onSave={props.onSave} />
         )}
       </Show>
     </span>
@@ -553,8 +566,7 @@ function SentenceToken(props: SentenceTokenProps) {
 interface WordPopoverProps {
   insight: WordInsight;
   onClear: () => void;
-  onSave: (surface: string) => void;
-  onMark: (surface: string, state: Exclude<WordLearningState, "unknown">) => void;
+  onSave: (insight: WordInsight) => void;
 }
 
 function WordPopover(props: WordPopoverProps) {
@@ -562,37 +574,25 @@ function WordPopover(props: WordPopoverProps) {
     event.stopPropagation();
     action();
   };
+  const definition = () => primaryDefinition(props.insight.entry);
 
   return (
     <span class="word-popover" role="dialog" aria-label={`Insight for ${props.insight.surface}`}>
       <strong>{props.insight.surface}</strong>
-      <span>{props.insight.definition}</span>
-      <span class="popover-state">{props.insight.saved ? props.insight.state : "not saved"}</span>
+      <DictionaryStatus insight={props.insight} compact />
+      <Show when={definition()}>{(item) => <span>{item().definition}</span>}</Show>
+      <Show when={definition()?.example}>
+        {(example) => <span class="popover-example">{example()}</span>}
+      </Show>
       <span class="popover-actions">
-        <Show when={!props.insight.saved}>
+        <Show when={props.insight.status === "ready" && !props.insight.saved}>
           <button
             type="button"
-            onClick={(event) => runAction(event, () => props.onSave(props.insight.surface))}
+            onClick={(event) => runAction(event, () => props.onSave(props.insight))}
           >
             Save
           </button>
         </Show>
-        <button
-          classList={{ active: props.insight.saved && props.insight.state === "learning" }}
-          type="button"
-          onClick={(event) =>
-            runAction(event, () => props.onMark(props.insight.surface, "learning"))
-          }
-        >
-          Learning
-        </button>
-        <button
-          classList={{ active: props.insight.saved && props.insight.state === "known" }}
-          type="button"
-          onClick={(event) => runAction(event, () => props.onMark(props.insight.surface, "known"))}
-        >
-          Known
-        </button>
       </span>
       <button
         type="button"
@@ -610,13 +610,10 @@ function WordPopover(props: WordPopoverProps) {
 
 interface WordInspectorProps {
   insight: WordInsight | null;
-  savedWords: SavedWord[];
-  onSave: (surface: string) => void;
-  onMark: (surface: string, state: Exclude<WordLearningState, "unknown">) => void;
-  onNoteChange: (surface: string, note: string) => void;
-  onExampleChange: (surface: string, example: string) => void;
+  savedWords: SavedDictionaryEntry[];
+  onSave: (insight: WordInsight) => void;
   onForget: (surface: string) => void;
-  onSelectSavedWord: (word: SavedWord) => void;
+  onSelectSavedWord: (word: SavedDictionaryEntry) => void;
 }
 
 function WordInspector(props: WordInspectorProps) {
@@ -636,30 +633,14 @@ function WordInspector(props: WordInspectorProps) {
           <>
             <div class="inspector-heading">
               <strong>{insight().surface}</strong>
-              <span classList={{ "learning-state": true, muted: !insight().saved }}>
-                {insight().saved ? insight().state : "not saved"}
-              </span>
+              <DictionaryStatus insight={insight()} />
             </div>
-            <div class="learning-actions">
-              <Show when={!insight().saved}>
-                <button type="button" onClick={() => props.onSave(insight().surface)}>
+            <div class="dictionary-actions">
+              <Show when={insight().status === "ready" && !insight().saved}>
+                <button type="button" onClick={() => props.onSave(insight())}>
                   Save
                 </button>
               </Show>
-              <button
-                classList={{ active: insight().saved && insight().state === "learning" }}
-                type="button"
-                onClick={() => props.onMark(insight().surface, "learning")}
-              >
-                Learning
-              </button>
-              <button
-                classList={{ active: insight().saved && insight().state === "known" }}
-                type="button"
-                onClick={() => props.onMark(insight().surface, "known")}
-              >
-                Known
-              </button>
               <Show when={insight().saved}>
                 <button type="button" onClick={() => props.onForget(insight().surface)}>
                   Forget
@@ -667,49 +648,61 @@ function WordInspector(props: WordInspectorProps) {
               </Show>
             </div>
             <dl>
-              <Show when={insight().partOfSpeech}>
+              <Show when={insight().entry?.phonetic}>
                 <div>
-                  <dt>Type</dt>
-                  <dd>{insight().partOfSpeech}</dd>
+                  <dt>Pronunciation</dt>
+                  <dd>{insight().entry?.phonetic}</dd>
                 </div>
               </Show>
-              <div>
-                <dt>Meaning</dt>
-                <dd>{insight().definition}</dd>
-              </div>
-              <Show when={insight().translation}>
+              <Show when={primaryDefinition(insight().entry)}>
+                {(definition) => (
+                  <div>
+                    <dt>Definition</dt>
+                    <dd>{definition().definition}</dd>
+                  </div>
+                )}
+              </Show>
+              <Show when={primaryDefinition(insight().entry)?.example}>
+                {(example) => (
+                  <div>
+                    <dt>Example</dt>
+                    <dd>{example()}</dd>
+                  </div>
+                )}
+              </Show>
+              <Show when={insight().entry?.meanings[0]?.partOfSpeech}>
+                {(partOfSpeech) => (
+                  <div>
+                    <dt>Type</dt>
+                    <dd>{partOfSpeech()}</dd>
+                  </div>
+                )}
+              </Show>
+              <Show when={primaryDefinition(insight().entry)?.synonyms.length}>
                 <div>
-                  <dt>French</dt>
-                  <dd>{insight().translation}</dd>
+                  <dt>Synonyms</dt>
+                  <dd>{primaryDefinition(insight().entry)?.synonyms.slice(0, 6).join(", ")}</dd>
                 </div>
               </Show>
-              <Show when={insight().example}>
+              <Show when={insight().entry?.sourceUrl}>
+                {(sourceUrl) => (
+                  <div>
+                    <dt>Source</dt>
+                    <dd>
+                      <a href={sourceUrl()} target="_blank" rel="noreferrer">
+                        Dictionary
+                      </a>
+                    </dd>
+                  </div>
+                )}
+              </Show>
+              <Show when={insight().message != null && insight().entry == null}>
                 <div>
-                  <dt>Example</dt>
-                  <dd>{insight().example}</dd>
+                  <dt>Status</dt>
+                  <dd>{insight().message}</dd>
                 </div>
               </Show>
             </dl>
-            <label class="learning-field">
-              <span>Note</span>
-              <textarea
-                value={insight().note ?? ""}
-                rows="4"
-                onInput={(event) =>
-                  props.onNoteChange(insight().surface, event.currentTarget.value)
-                }
-              />
-            </label>
-            <label class="learning-field">
-              <span>Example</span>
-              <textarea
-                value={insight().example ?? ""}
-                rows="4"
-                onInput={(event) =>
-                  props.onExampleChange(insight().surface, event.currentTarget.value)
-                }
-              />
-            </label>
           </>
         )}
       </Show>
@@ -717,9 +710,46 @@ function WordInspector(props: WordInspectorProps) {
   );
 }
 
+interface DictionaryStatusProps {
+  insight: WordInsight;
+  compact?: boolean;
+}
+
+function DictionaryStatus(props: DictionaryStatusProps) {
+  const label = () => {
+    if (props.insight.saved) return "Saved";
+
+    switch (props.insight.status) {
+      case "loading":
+        return "Looking up";
+      case "ready":
+        return "Definition found";
+      case "not-found":
+        return "Not found";
+      case "error":
+        return "Needs attention";
+      default:
+        return "Ready";
+    }
+  };
+
+  return (
+    <span
+      classList={{
+        "dictionary-state": true,
+        compact: props.compact === true,
+        attention: props.insight.status === "error" || props.insight.status === "not-found",
+        saved: props.insight.saved
+      }}
+    >
+      {label()}
+    </span>
+  );
+}
+
 interface SavedWordListProps {
-  words: SavedWord[];
-  onSelect: (word: SavedWord) => void;
+  words: SavedDictionaryEntry[];
+  onSelect: (word: SavedDictionaryEntry) => void;
 }
 
 function SavedWordList(props: SavedWordListProps) {
@@ -734,7 +764,7 @@ function SavedWordList(props: SavedWordListProps) {
           {(word) => (
             <button class="saved-word-row" type="button" onClick={() => props.onSelect(word)}>
               <span>{word.surface}</span>
-              <small>{word.state}</small>
+              <small>{primaryDefinition(word)?.definition ?? "Saved definition"}</small>
             </button>
           )}
         </For>
