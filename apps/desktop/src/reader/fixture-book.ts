@@ -12,7 +12,7 @@ export interface FixtureBook {
 export const fixtureBook: FixtureBook = {
   id: "fixture-book-mara",
   title: "The Listening Margin",
-  author: "Readex fixture",
+  author: "Sample Library",
   chapter: {
     id: "chapter-1",
     title: "Chapter 1",

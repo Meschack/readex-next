@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import {
   advancePlayback,
   createPlaybackState,
@@ -11,7 +11,18 @@ import {
 } from "@readex/reader";
 import { createWordInsight, type WordInsight } from "@readex/learning";
 import type { ReaderTextToken } from "@readex/text";
-import { buildFixtureReaderView, type ReaderSentenceView } from "./readerView";
+import {
+  createBookRepository,
+  toFriendlyLibraryError,
+  type SaveReadingPositionInput
+} from "../library/book-repository";
+import type { LibraryBookSummary } from "./reader-document";
+import {
+  buildFixtureReaderView,
+  buildReaderViewFromDocument,
+  type ReaderSentenceView,
+  type ReaderView
+} from "./reader-view";
 
 const playbackTickMs = 2600;
 
@@ -22,11 +33,16 @@ interface SelectedWord {
 }
 
 export function ReaderExperience() {
-  const reader = buildFixtureReaderView();
+  const repository = createBookRepository();
+  const sampleReader = buildFixtureReaderView();
+  const [reader, setReader] = createSignal<ReaderView>(sampleReader);
+  const [libraryBooks, setLibraryBooks] = createSignal<LibraryBookSummary[]>([]);
+  const [libraryNotice, setLibraryNotice] = createSignal<string | null>(null);
+  const [isImporting, setIsImporting] = createSignal(false);
   const [playback, setPlayback] = createSignal(createPlaybackState());
   const [selectedWord, setSelectedWord] = createSignal<SelectedWord | null>(null);
 
-  const activeSentence = createMemo(() => reader.sentences[playback().activeSentenceIndex]);
+  const activeSentence = createMemo(() => reader().sentences[playback().activeSentenceIndex]);
   const highlight = createMemo(() => highlightSentence(activeSentence()?.id ?? null));
   const activeWordInsight = createMemo(() => selectedWord()?.insight ?? null);
   const statusLabel = createMemo(() => {
@@ -38,35 +54,57 @@ export function ReaderExperience() {
       case "ended":
         return "Finished";
       default:
-        return "Ready to listen";
+        return reader().source === "sample" ? "Sample reader" : "Ready to listen";
     }
+  });
+
+  onMount(() => {
+    void refreshLibrary();
   });
 
   createEffect(() => {
     if (playback().status !== "playing") return;
 
     const timer = window.setInterval(() => {
-      setPlayback((current) => advancePlayback(current, reader.sentences.length));
+      setPlayback((current) => advancePlayback(current, reader().sentences.length));
     }, playbackTickMs);
 
     onCleanup(() => window.clearInterval(timer));
+  });
+
+  createEffect(() => {
+    const currentReader = reader();
+    const currentPlayback = playback();
+    const sentence = currentReader.sentences[currentPlayback.activeSentenceIndex];
+
+    if (currentReader.source !== "library" || sentence == null) return;
+
+    const position: SaveReadingPositionInput = {
+      bookId: currentReader.book.id,
+      chapterId: currentReader.chapter.id,
+      sentenceIndex: sentence.index
+    };
+
+    void repository.saveReadingPosition(position).catch(() => {
+      setLibraryNotice("We couldn't save your place just now.");
+    });
   });
 
   const togglePlayback = () => {
     setPlayback((current) =>
       current.status === "playing"
         ? pausePlayback(current)
-        : playPlayback(current, reader.sentences.length)
+        : playPlayback(current, reader().sentences.length)
     );
   };
 
   const moveSentence = (direction: -1 | 1) => {
-    setPlayback((current) => movePlayback(current, reader.sentences.length, direction));
+    setPlayback((current) => movePlayback(current, reader().sentences.length, direction));
   };
 
   const selectSentence = (sentenceIndex: number) => {
     setPlayback((current) =>
-      selectPlaybackSentence(current, reader.sentences.length, sentenceIndex)
+      selectPlaybackSentence(current, reader().sentences.length, sentenceIndex)
     );
   };
 
@@ -86,20 +124,86 @@ export function ReaderExperience() {
     selectedWord()?.sentenceId === sentenceId &&
     selectedWord()?.tokenIndex === token.index;
 
+  const activateReader = (nextReader: ReaderView) => {
+    setReader(nextReader);
+    setPlayback((current) =>
+      selectPlaybackSentence(
+        { activeSentenceIndex: nextReader.initialSentenceIndex, status: current.status },
+        nextReader.sentences.length,
+        nextReader.initialSentenceIndex
+      )
+    );
+    setSelectedWord(null);
+  };
+
+  const refreshLibrary = async () => {
+    try {
+      const books = await repository.listBooks();
+      setLibraryBooks(books);
+
+      if (reader().source === "sample" && books[0] != null) {
+        await openLibraryBook(books[0].id);
+      }
+    } catch (error) {
+      setLibraryNotice(toFriendlyLibraryError(error));
+    }
+  };
+
+  const openSampleReader = () => {
+    activateReader(sampleReader);
+    setLibraryNotice(null);
+  };
+
+  const openLibraryBook = async (bookId: string) => {
+    try {
+      const document = await repository.openBook(bookId);
+      activateReader(buildReaderViewFromDocument(document));
+      setLibraryNotice(null);
+    } catch (error) {
+      setLibraryNotice(toFriendlyLibraryError(error));
+    }
+  };
+
+  const importBook = async () => {
+    setIsImporting(true);
+    setLibraryNotice(null);
+
+    try {
+      const document = await repository.importBookFromDialog();
+      if (document == null) return;
+
+      activateReader(buildReaderViewFromDocument(document));
+      setLibraryNotice("Book added to your library.");
+      setLibraryBooks(await repository.listBooks());
+    } catch (error) {
+      setLibraryNotice(toFriendlyLibraryError(error));
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   return (
     <main class="readex-shell">
-      <LibraryRail />
+      <LibraryRail
+        activeBookId={reader().book.id}
+        books={libraryBooks()}
+        importing={isImporting()}
+        notice={libraryNotice()}
+        onImport={importBook}
+        onOpenBook={openLibraryBook}
+        onOpenSample={openSampleReader}
+      />
 
       <section class="reader-surface" aria-label="Reader">
         <header class="reader-header">
           <p>{statusLabel()}</p>
-          <h1>{reader.book.title}</h1>
-          <span>{reader.book.author}</span>
+          <h1>{reader().book.title}</h1>
+          <span>{reader().book.author}</span>
         </header>
 
         <div class="reader-layout">
           <div class="audio-margin" aria-hidden="true">
-            <For each={reader.sentences}>
+            <For each={reader().sentences}>
               {(sentence) => (
                 <span
                   classList={{
@@ -111,8 +215,8 @@ export function ReaderExperience() {
             </For>
           </div>
 
-          <article class="page" aria-label={`${reader.chapter.title} text`}>
-            <For each={reader.sentences}>
+          <article class="page" aria-label={`${reader().chapter.title} text`}>
+            <For each={reader().sentences}>
               {(sentence) => (
                 <p
                   classList={{
@@ -142,9 +246,9 @@ export function ReaderExperience() {
       <WordInspector insight={activeWordInsight()} />
 
       <PlaybackRail
-        chapterTitle={reader.chapter.title}
+        chapterTitle={reader().chapter.title}
         activeIndex={playback().activeSentenceIndex}
-        sentenceCount={reader.sentences.length}
+        sentenceCount={reader().sentences.length}
         status={playback().status}
         onPrevious={() => moveSentence(-1)}
         onToggle={togglePlayback}
@@ -154,7 +258,17 @@ export function ReaderExperience() {
   );
 }
 
-function LibraryRail() {
+interface LibraryRailProps {
+  activeBookId: string;
+  books: LibraryBookSummary[];
+  importing: boolean;
+  notice: string | null;
+  onImport: () => void;
+  onOpenBook: (bookId: string) => void;
+  onOpenSample: () => void;
+}
+
+function LibraryRail(props: LibraryRailProps) {
   return (
     <aside class="library-rail" aria-label="Library">
       <strong class="brand">Readex</strong>
@@ -166,6 +280,47 @@ function LibraryRail() {
         <a href="/">Bookmarks</a>
         <a href="/">Words</a>
       </nav>
+      <section class="library-actions" aria-label="Book library">
+        <button
+          class="import-button"
+          type="button"
+          disabled={props.importing}
+          onClick={props.onImport}
+        >
+          {props.importing ? "Adding..." : "Add EPUB"}
+        </button>
+        <Show when={props.notice}>{(notice) => <p class="library-notice">{notice()}</p>}</Show>
+        <div class="book-list" role="list">
+          <button
+            classList={{
+              "book-row": true,
+              active: props.activeBookId === "fixture-book-mara"
+            }}
+            type="button"
+            onClick={props.onOpenSample}
+          >
+            <span>The Listening Margin</span>
+            <small>Sample book</small>
+          </button>
+          <For each={props.books}>
+            {(book) => (
+              <button
+                classList={{
+                  "book-row": true,
+                  active: props.activeBookId === book.id
+                }}
+                type="button"
+                onClick={() => props.onOpenBook(book.id)}
+              >
+                <span>{book.title}</span>
+                <small>
+                  {book.author} · {book.chapterCount} chapter{book.chapterCount === 1 ? "" : "s"}
+                </small>
+              </button>
+            )}
+          </For>
+        </div>
+      </section>
     </aside>
   );
 }
@@ -297,7 +452,7 @@ interface PlaybackRailProps {
 
 function PlaybackRail(props: PlaybackRailProps) {
   const progress = () =>
-    props.sentenceCount <= 1 ? 100 : (props.activeIndex / (props.sentenceCount - 1)) * 100;
+    props.sentenceCount <= 1 ? 0 : (props.activeIndex / (props.sentenceCount - 1)) * 100;
 
   return (
     <footer class="audio-rail" aria-label="Playback controls">

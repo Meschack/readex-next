@@ -1,5 +1,5 @@
 import "./App.css";
-import { ReaderExperience } from "./reader/ReaderExperience";
+import { ReaderExperience } from "./reader/reader-experience";
 
 function App() {
   return <ReaderExperience />;

@@ -1,0 +1,40 @@
+export interface LibraryBookSummary {
+  id: string;
+  title: string;
+  author: string;
+  importedAt: string;
+  chapterCount: number;
+  sentenceCount: number;
+  lastChapterId: string | null;
+  lastSentenceIndex: number;
+}
+
+export interface ReaderDocumentDto {
+  book: {
+    id: string;
+    title: string;
+    author: string;
+  };
+  chapters: ReaderChapterDto[];
+  position: ReadingPositionDto | null;
+}
+
+export interface ReaderChapterDto {
+  id: string;
+  title: string;
+  index: number;
+  sentences: ReaderSentenceDto[];
+}
+
+export interface ReaderSentenceDto {
+  id: string;
+  index: number;
+  text: string;
+}
+
+export interface ReadingPositionDto {
+  bookId: string;
+  chapterId: string;
+  sentenceIndex: number;
+  updatedAt: string;
+}
