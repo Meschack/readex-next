@@ -1,0 +1,26 @@
+{
+  "name": "readex-next-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "scripts": {
+    "dev": "pnpm dev:desktop",
+    "dev:tui": "node scripts/dev-tui.mjs",
+    "dev:desktop": "pnpm --filter @readex/desktop tauri dev",
+    "dev:web": "pnpm --filter @readex/desktop dev",
+    "build": "pnpm --filter @readex/desktop build",
+    "build:desktop": "pnpm --filter @readex/desktop tauri build",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "pnpm typecheck && pnpm test && pnpm format",
+    "format": "prettier --check .",
+    "format:write": "prettier --write ."
+  },
+  "devDependencies": {
+    "prettier": "^3.7.4",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "tabs": [
+    {
+      "name": "DESKTOP",
+      "dir": ".",
+      "cmd": "pnpm dev:desktop",
+      "color": "green"
+    },
+    {
+      "name": "WEB",
+      "dir": ".",
+      "cmd": "pnpm dev:web",
+      "color": "blue"
+    },
+    {
+      "name": "TESTS",
+      "dir": ".",
+      "cmd": "pnpm test:watch",
+      "color": "purple"
+    },
+    {
+      "name": "CHECK",
+      "dir": ".",
+      "cmd": "pnpm typecheck",
+      "color": "yellow"
+    }
+  ]
+}

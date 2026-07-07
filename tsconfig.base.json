@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "forceConsistentCasingInFileNames": true,
+    "paths": {
+      "@readex/domain": ["./packages/domain/src/index.ts"],
+      "@readex/text": ["./packages/text/src/index.ts"],
+      "@readex/reader": ["./packages/reader/src/index.ts"],
+      "@readex/library": ["./packages/library/src/index.ts"],
+      "@readex/audio": ["./packages/audio/src/index.ts"],
+      "@readex/storage": ["./packages/storage/src/index.ts"],
+      "@readex/learning": ["./packages/learning/src/index.ts"]
+    }
+  }
+}
