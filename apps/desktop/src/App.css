@@ -400,6 +400,33 @@ button {
   background: rgba(36, 91, 255, 0.08);
 }
 
+.sentence-window-jump {
+  appearance: none;
+  background: #ffffff;
+  border: 1px solid #dedbd1;
+  border-radius: 8px;
+  color: #6d6a60;
+  display: block;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px;
+  margin: 10px 0 22px;
+  min-height: 36px;
+  padding: 0 12px;
+  text-align: left;
+  width: 100%;
+}
+
+.sentence-window-jump:hover,
+.sentence-window-jump:focus-visible {
+  border-color: #245bff;
+  color: #1744ca;
+  outline: none;
+}
+
+.sentence-window-jump:focus-visible {
+  box-shadow: 0 0 0 3px rgba(36, 91, 255, 0.18);
+}
+
 .word-shell {
   display: inline;
   position: relative;

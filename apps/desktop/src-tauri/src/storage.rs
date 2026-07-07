@@ -907,14 +907,19 @@ fn now() -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf};
+    use std::{
+        collections::HashMap,
+        env, fs,
+        path::{Path, PathBuf},
+        time::Instant,
+    };
 
     use chrono::Utc;
 
     use super::{
         LibrarySearchRequest, ReadexStore, SaveBookmarkRequest, SaveReadingPositionRequest,
     };
-    use crate::epub_import::{ImportedBook, ImportedChapter};
+    use crate::epub_import::{import_epub_file, ImportedBook, ImportedChapter};
 
     #[test]
     fn saves_books_and_restores_reading_position() {
@@ -1023,10 +1028,214 @@ mod tests {
         fs::remove_dir_all(temp_dir).ok();
     }
 
+    #[test]
+    #[ignore = "runs against local EPUB files for manual real-book QA"]
+    fn real_book_qa_imports_configured_epubs_through_storage_workflow() {
+        let epub_paths = configured_qa_epub_paths();
+        assert!(
+            epub_paths.len() >= 2,
+            "real-book QA needs at least two EPUBs; set READEX_QA_EPUBS with semicolon-separated paths"
+        );
+
+        let temp_dir = temp_store_dir();
+        fs::create_dir_all(&temp_dir).expect("qa store dir should be created");
+        let store =
+            ReadexStore::open_at(temp_dir.join("readex.sqlite3")).expect("store should initialize");
+
+        for epub_path in &epub_paths {
+            let started_at = Instant::now();
+            let imported = import_epub_file(epub_path).expect("epub should import");
+            assert_chapter_titles_are_diverse(&imported, epub_path);
+
+            let document = store
+                .save_imported_book(imported)
+                .expect("imported epub should persist");
+            let total_sentences = document
+                .chapters
+                .iter()
+                .map(|chapter| chapter.sentences.len())
+                .sum::<usize>();
+            let largest_chapter = document
+                .chapters
+                .iter()
+                .max_by_key(|chapter| chapter.sentences.len())
+                .expect("document should have chapters");
+            let target_sentence = largest_chapter
+                .sentences
+                .iter()
+                .find(|sentence| search_query_from_sentence(&sentence.text).is_some())
+                .or_else(|| largest_chapter.sentences.first())
+                .expect("largest chapter should have sentences");
+
+            assert!(
+                total_sentences > 0,
+                "real-book QA imported zero sentences for {}",
+                epub_path.display()
+            );
+
+            store
+                .save_reading_position(SaveReadingPositionRequest {
+                    book_id: document.book.id.clone(),
+                    chapter_id: largest_chapter.id.clone(),
+                    sentence_index: target_sentence.index,
+                })
+                .expect("reading position should save");
+            let reopened = store
+                .open_book(&document.book.id)
+                .expect("book should reopen after position save");
+            assert_eq!(
+                reopened
+                    .position
+                    .expect("position should exist")
+                    .sentence_index,
+                target_sentence.index
+            );
+
+            let bookmark = store
+                .save_bookmark(SaveBookmarkRequest {
+                    book_id: document.book.id.clone(),
+                    chapter_id: largest_chapter.id.clone(),
+                    sentence_id: target_sentence.id.clone(),
+                    sentence_index: target_sentence.index,
+                    text: target_sentence.text.clone(),
+                    note: None,
+                })
+                .expect("bookmark should save");
+            let bookmarks = store
+                .list_bookmarks(Some(&document.book.id))
+                .expect("bookmarks should list");
+            assert_eq!(bookmarks.len(), 1);
+            assert_eq!(bookmarks[0].id, bookmark.id);
+
+            let query = search_query_from_sentence(&target_sentence.text)
+                .unwrap_or_else(|| document.book.title.clone());
+            let search_results = store
+                .search_library(LibrarySearchRequest {
+                    query: query.clone(),
+                    book_id: Some(document.book.id.clone()),
+                    limit: Some(8),
+                })
+                .expect("book search should run");
+            assert!(
+                !search_results.is_empty(),
+                "search for {query:?} returned no results in {}",
+                document.book.title
+            );
+
+            let exported = store
+                .export_book_data(&document.book.id)
+                .expect("book export should work");
+            assert_eq!(exported.book.id, document.book.id);
+            assert_eq!(exported.bookmarks.len(), 1);
+
+            println!(
+                "QA {}: {} chapters, {} sentences, largest chapter {:?} has {} sentences, imported in {:?}",
+                document.book.title,
+                document.chapters.len(),
+                total_sentences,
+                largest_chapter.title,
+                largest_chapter.sentences.len(),
+                started_at.elapsed()
+            );
+        }
+
+        assert_eq!(
+            store.list_books().expect("library should list").len(),
+            epub_paths.len()
+        );
+
+        fs::remove_dir_all(temp_dir).ok();
+    }
+
     fn temp_store_dir() -> PathBuf {
         std::env::temp_dir().join(format!(
             "readex-store-test-{}",
             Utc::now().timestamp_nanos_opt().unwrap_or_default()
         ))
+    }
+
+    fn configured_qa_epub_paths() -> Vec<PathBuf> {
+        if let Ok(paths) = env::var("READEX_QA_EPUBS") {
+            return paths
+                .split([';', '\n'])
+                .map(str::trim)
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from)
+                .collect();
+        }
+
+        let Some(home_dir) = env::var_os("HOME").map(PathBuf::from) else {
+            return Vec::new();
+        };
+        let books_dir = home_dir.join("Downloads/books");
+
+        [
+            "the-selfish-gene.epub",
+            "the-kreutzer-sonata.epub",
+            "the-god-delusion.epub",
+            "the-way-of-the-superior-man.epub",
+            "industrial-society-and-its-future.epub",
+            "basic-economics-thomas-sowell.epub",
+        ]
+        .into_iter()
+        .map(|file_name| books_dir.join(file_name))
+        .filter(|path| path.exists())
+        .collect()
+    }
+
+    fn assert_chapter_titles_are_diverse(book: &ImportedBook, path: &Path) {
+        assert!(
+            !book.chapters.is_empty(),
+            "real-book QA imported no chapters for {}",
+            path.display()
+        );
+        assert!(
+            book.chapters
+                .iter()
+                .all(|chapter| !chapter.title.trim().is_empty()),
+            "real-book QA found empty chapter titles for {}",
+            path.display()
+        );
+
+        if book.chapters.len() < 4 {
+            return;
+        }
+
+        let mut title_counts = HashMap::<String, usize>::new();
+        for chapter in &book.chapters {
+            *title_counts
+                .entry(chapter.title.to_lowercase())
+                .or_default() += 1;
+        }
+
+        let (dominant_title, dominant_count) = title_counts
+            .iter()
+            .max_by_key(|(_, count)| *count)
+            .expect("title count should exist");
+
+        assert!(
+            title_counts.len() >= 3,
+            "chapter titles look collapsed for {}: only {} unique titles across {} chapters",
+            path.display(),
+            title_counts.len(),
+            book.chapters.len()
+        );
+        assert!(
+            dominant_count * 100 <= book.chapters.len() * 70,
+            "chapter titles look collapsed for {}: {:?} appears in {} of {} chapters",
+            path.display(),
+            dominant_title,
+            dominant_count,
+            book.chapters.len()
+        );
+    }
+
+    fn search_query_from_sentence(text: &str) -> Option<String> {
+        text.split_whitespace()
+            .map(|word| {
+                word.trim_matches(|character: char| !character.is_alphanumeric())
+                    .to_string()
+            })
+            .find(|word| word.chars().count() >= 5 && word.chars().all(char::is_alphabetic))
     }
 }

@@ -29,6 +29,7 @@ pnpm install
 pnpm setup:piper
 pnpm dev:desktop
 pnpm dev:web
+pnpm dev:stop
 pnpm typecheck
 pnpm test
 pnpm build
@@ -43,6 +44,7 @@ The project includes a small local TUI at `scripts/dev-tui.mjs`. It reads `.dev-
 
 - desktop app
 - web renderer
+- dev server stop command
 - tests
 - full JS/TS check
 - native Rust/Tauri check
@@ -67,6 +69,7 @@ Current verified commands:
 
 - `pnpm install`
 - `pnpm dev:tui -- --list`
+- `pnpm dev:stop`
 - `pnpm dev:desktop`
 - `pnpm typecheck`
 - `pnpm test`
@@ -84,7 +87,7 @@ Run this from the repository root. The root `Cargo.toml` is a workspace that poi
 
 If native checks report missing system packages through `pkg-config`, install the Tauri prerequisite set above and retry.
 
-If `pnpm dev:desktop` reports that port `1420` is already in use, stop the stale Vite process and rerun the command.
+If `pnpm dev:desktop` reports that port `1420` is already in use, run `pnpm dev:stop` and rerun the command.
 
 ## Local Narration Voice
 

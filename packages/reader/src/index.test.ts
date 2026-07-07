@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   advancePlayback,
   calculateReaderProgress,
+  calculateSentenceRenderWindow,
   createPlaybackState,
   finishSentencePlayback,
   movePlayback,
@@ -108,5 +109,39 @@ describe("reader search", () => {
   it("reports whether a sentence matches a query", () => {
     expect(sentenceMatchesQuery(sentences[0], "listens")).toBe(true);
     expect(sentenceMatchesQuery(sentences[0], "")).toBe(false);
+  });
+});
+
+describe("sentence render window", () => {
+  it("keeps the mounted sentence range bounded around the active sentence", () => {
+    expect(
+      calculateSentenceRenderWindow({
+        sentenceCount: 2027,
+        activeSentenceIndex: 1000,
+        leadCount: 36,
+        trailCount: 96
+      })
+    ).toEqual({
+      start: 964,
+      end: 1097,
+      hiddenBefore: 964,
+      hiddenAfter: 930
+    });
+  });
+
+  it("clamps the window at chapter edges", () => {
+    expect(
+      calculateSentenceRenderWindow({
+        sentenceCount: 12,
+        activeSentenceIndex: -4,
+        leadCount: 36,
+        trailCount: 96
+      })
+    ).toEqual({
+      start: 0,
+      end: 12,
+      hiddenBefore: 0,
+      hiddenAfter: 0
+    });
   });
 });

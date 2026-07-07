@@ -18,6 +18,7 @@ import {
 import { bookmarkedBookIds, filterLibraryBooks, type LibraryBookFilter } from "@readex/library";
 import {
   calculateReaderProgress,
+  calculateSentenceRenderWindow,
   createPlaybackState,
   finishSentencePlayback,
   highlightSentence,
@@ -48,7 +49,7 @@ import {
   type SavedDictionaryEntry,
   type WordInsight
 } from "@readex/learning";
-import type { ReaderTextToken } from "@readex/text";
+import { tokenizeReaderText, type ReaderTextToken } from "@readex/text";
 import {
   createAudioCacheRepository,
   type AudioCacheStatsDto
@@ -86,6 +87,9 @@ interface OpenBookOptions {
   sentenceIndex?: number;
   playbackStatus?: PlaybackStatus;
 }
+
+const renderedSentenceLead = 36;
+const renderedSentenceTrail = 96;
 
 export function ReaderExperience() {
   const repository = createBookRepository();
@@ -134,6 +138,19 @@ export function ReaderExperience() {
 
   const activeSentence = createMemo(() => reader().sentences[playback().activeSentenceIndex]);
   const highlight = createMemo(() => highlightSentence(activeSentence()?.id ?? null));
+  const visibleSentenceRange = createMemo(() => {
+    return calculateSentenceRenderWindow({
+      activeSentenceIndex: playback().activeSentenceIndex,
+      leadCount: renderedSentenceLead,
+      sentenceCount: reader().sentences.length,
+      trailCount: renderedSentenceTrail
+    });
+  });
+  const visibleSentences = createMemo(() => {
+    const range = visibleSentenceRange();
+
+    return reader().sentences.slice(range.start, range.end);
+  });
   const readerProgress = createMemo(() =>
     calculateReaderProgress(reader().chapters, reader().chapter.id, playback().activeSentenceIndex)
   );
@@ -799,7 +816,7 @@ export function ReaderExperience() {
 
         <div class="reader-layout">
           <div class="audio-margin" aria-hidden="true">
-            <For each={reader().sentences}>
+            <For each={visibleSentences()}>
               {(sentence) => (
                 <span
                   classList={{
@@ -813,36 +830,59 @@ export function ReaderExperience() {
           </div>
 
           <article class="page" aria-label={`${reader().chapter.title} text`}>
-            <For each={reader().sentences}>
-              {(sentence) => (
-                <p
-                  ref={(element) => {
-                    sentenceElements.set(sentence.id, element);
-                  }}
-                  classList={{
-                    sentence: true,
-                    active: highlight().activeSentenceId === sentence.id,
-                    bookmarked: bookmarkedSentenceIds().has(sentence.id),
-                    "search-hit": sentenceMatchesQuery(sentence, readerSearchQuery())
-                  }}
-                  onClick={() => selectSentence(sentence.index)}
-                >
-                  <For each={sentence.tokens}>
-                    {(token) => (
-                      <SentenceToken
-                        token={token}
-                        sentence={sentence}
-                        selected={isSelectedWord(sentence.id, token)}
-                        insight={isSelectedWord(sentence.id, token) ? activeWordInsight() : null}
-                        onSelect={selectWord}
-                        onClear={() => setSelectedWord(null)}
-                        onSave={saveDictionaryWord}
-                      />
-                    )}
-                  </For>
-                </p>
-              )}
+            <Show when={visibleSentenceRange().hiddenBefore > 0}>
+              <button
+                class="sentence-window-jump"
+                type="button"
+                onClick={() => selectSentence(visibleSentenceRange().start - 1)}
+              >
+                Previous {Math.min(renderedSentenceLead, visibleSentenceRange().hiddenBefore)}{" "}
+                sentences
+              </button>
+            </Show>
+            <For each={visibleSentences()}>
+              {(sentence) => {
+                onCleanup(() => sentenceElements.delete(sentence.id));
+
+                return (
+                  <p
+                    ref={(element) => {
+                      sentenceElements.set(sentence.id, element);
+                    }}
+                    classList={{
+                      sentence: true,
+                      active: highlight().activeSentenceId === sentence.id,
+                      bookmarked: bookmarkedSentenceIds().has(sentence.id),
+                      "search-hit": sentenceMatchesQuery(sentence, readerSearchQuery())
+                    }}
+                    onClick={() => selectSentence(sentence.index)}
+                  >
+                    <For each={tokenizeReaderText(sentence.text)}>
+                      {(token) => (
+                        <SentenceToken
+                          token={token}
+                          sentence={sentence}
+                          selected={isSelectedWord(sentence.id, token)}
+                          insight={isSelectedWord(sentence.id, token) ? activeWordInsight() : null}
+                          onSelect={selectWord}
+                          onClear={() => setSelectedWord(null)}
+                          onSave={saveDictionaryWord}
+                        />
+                      )}
+                    </For>
+                  </p>
+                );
+              }}
             </For>
+            <Show when={visibleSentenceRange().hiddenAfter > 0}>
+              <button
+                class="sentence-window-jump"
+                type="button"
+                onClick={() => selectSentence(visibleSentenceRange().end)}
+              >
+                Next {Math.min(renderedSentenceTrail, visibleSentenceRange().hiddenAfter)} sentences
+              </button>
+            </Show>
           </article>
         </div>
       </section>

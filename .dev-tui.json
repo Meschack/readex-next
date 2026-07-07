@@ -13,6 +13,12 @@
       "color": "blue"
     },
     {
+      "name": "STOP",
+      "dir": ".",
+      "cmd": "pnpm dev:stop",
+      "color": "yellow"
+    },
+    {
       "name": "TESTS",
       "dir": ".",
       "cmd": "pnpm test:watch",

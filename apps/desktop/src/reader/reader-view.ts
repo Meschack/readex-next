@@ -1,5 +1,5 @@
 import { createSentenceId } from "@readex/reader";
-import { segmentSentences, tokenizeReaderText, type ReaderTextToken } from "@readex/text";
+import { segmentSentences } from "@readex/text";
 import type { ReaderDocumentDto } from "./reader-document";
 import { fixtureBook, type FixtureBook } from "./fixture-book";
 
@@ -7,7 +7,6 @@ export interface ReaderSentenceView {
   id: string;
   index: number;
   text: string;
-  tokens: ReaderTextToken[];
 }
 
 export interface ReaderChapterNavigationItem {
@@ -92,8 +91,7 @@ export function buildFixtureReaderView(
     sentences: sentences.map((sentence) => ({
       id: createSentenceId(book.id, chapter.id, sentence.index),
       index: sentence.index,
-      text: sentence.text,
-      tokens: tokenizeReaderText(sentence.text)
+      text: sentence.text
     }))
   };
 }
@@ -150,8 +148,7 @@ export function buildReaderViewFromDocument(
     sentences: chapter.sentences.map((sentence) => ({
       id: sentence.id,
       index: sentence.index,
-      text: sentence.text,
-      tokens: tokenizeReaderText(sentence.text)
+      text: sentence.text
     }))
   };
 }

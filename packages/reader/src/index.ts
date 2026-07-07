@@ -43,6 +43,20 @@ export interface ReaderProgress {
   bookPercent: number;
 }
 
+export interface SentenceRenderWindow {
+  start: number;
+  end: number;
+  hiddenBefore: number;
+  hiddenAfter: number;
+}
+
+export interface SentenceRenderWindowOptions {
+  sentenceCount: number;
+  activeSentenceIndex: number;
+  leadCount: number;
+  trailCount: number;
+}
+
 export function highlightSentence(sentenceId: string | null): HighlightState {
   return { activeSentenceId: sentenceId };
 }
@@ -212,6 +226,25 @@ export function calculateReaderProgress(
     bookSentenceNumber,
     bookSentenceCount,
     bookPercent: percentage(bookSentenceNumber, bookSentenceCount)
+  };
+}
+
+export function calculateSentenceRenderWindow(
+  options: SentenceRenderWindowOptions
+): SentenceRenderWindow {
+  const sentenceCount = Math.max(0, Math.trunc(options.sentenceCount));
+  const leadCount = Math.max(0, Math.trunc(options.leadCount));
+  const trailCount = Math.max(0, Math.trunc(options.trailCount));
+  const activeIndex =
+    sentenceCount === 0 ? 0 : clampSentenceIndex(options.activeSentenceIndex, sentenceCount);
+  const start = Math.max(0, activeIndex - leadCount);
+  const end = Math.min(sentenceCount, activeIndex + trailCount + 1);
+
+  return {
+    start,
+    end,
+    hiddenBefore: start,
+    hiddenAfter: sentenceCount - end
   };
 }
 

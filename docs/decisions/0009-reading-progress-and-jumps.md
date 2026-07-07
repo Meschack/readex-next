@@ -14,8 +14,12 @@ Manual sentence jumps go through a shared playback transition that clears stale 
 
 Saved reading position remains event-driven: once reader state and playback state point at the new active sentence, the existing persistence effect saves that position for library books.
 
+The page renderer mounts a bounded window of sentences around the active sentence instead of the whole chapter. Progress, search, bookmarks, and saved position still operate on the complete chapter data, while the DOM stays small enough for large imported books.
+
 ## Consequences
 
 Resume, bookmark navigation, and search navigation now derive visible progress from the same state that drives highlighting and persistence.
 
 Opening a different book is intentionally calm: it selects the right place without starting playback unexpectedly.
+
+Very large chapters use previous/next sentence-window controls when the active reading position is far from the chapter edges. This keeps reading continuous during playback without forcing thousands of paragraph and word-token controls into the page at once.

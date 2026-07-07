@@ -113,8 +113,10 @@ pub fn import_epub_file(path: &Path) -> Result<ImportedBook, ImportError> {
 
         chapters.push(ImportedChapter {
             id: format!("{book_id}:chapter-{}", chapter_index + 1),
-            title: extract_chapter_heading(&chapter_xml)
-                .or_else(|| navigation_titles.get(&chapter_path).cloned())
+            title: navigation_titles
+                .get(&chapter_path)
+                .cloned()
+                .or_else(|| extract_chapter_heading(&chapter_xml))
                 .or_else(|| extract_document_title(&chapter_xml))
                 .unwrap_or_else(|| format!("Chapter {}", chapter_index + 1)),
             index: chapter_index,
@@ -166,7 +168,7 @@ struct SpineItem {
 }
 
 fn parse_package(xml: &str, opf_path: &str) -> Option<PackageDocument> {
-    let document = roxmltree::Document::parse(xml).ok()?;
+    let document = parse_epub_xml(xml).ok()?;
     let title = first_text(&document, "title");
     let author = first_text(&document, "creator");
     let all_manifest_items = document
@@ -242,7 +244,7 @@ fn is_readable_manifest_item(item: &ManifestItem) -> bool {
 }
 
 fn find_package_path(container_xml: &str) -> Option<String> {
-    let document = roxmltree::Document::parse(container_xml).ok()?;
+    let document = parse_epub_xml(container_xml).ok()?;
     document
         .descendants()
         .find(|node| node.tag_name().name() == "rootfile")
@@ -258,21 +260,27 @@ fn read_navigation_titles(
 
     if let Some(nav_path) = &package.nav_path {
         if let Some(nav_xml) = read_zip_text(archive, nav_path) {
-            titles.extend(parse_epub3_nav_titles(&nav_xml, nav_path));
+            merge_navigation_titles(&mut titles, parse_epub3_nav_titles(&nav_xml, nav_path));
         }
     }
 
     if let Some(ncx_path) = &package.ncx_path {
         if let Some(ncx_xml) = read_zip_text(archive, ncx_path) {
-            titles.extend(parse_ncx_titles(&ncx_xml, ncx_path));
+            merge_navigation_titles(&mut titles, parse_ncx_titles(&ncx_xml, ncx_path));
         }
     }
 
     titles
 }
 
+fn merge_navigation_titles(target: &mut HashMap<String, String>, source: HashMap<String, String>) {
+    for (path, title) in source {
+        target.entry(path).or_insert(title);
+    }
+}
+
 fn parse_epub3_nav_titles(xml: &str, nav_path: &str) -> HashMap<String, String> {
-    let Ok(document) = roxmltree::Document::parse(xml) else {
+    let Ok(document) = parse_epub_xml(xml) else {
         return HashMap::new();
     };
     let nav_base_dir = epub_parent(nav_path);
@@ -281,19 +289,26 @@ fn parse_epub3_nav_titles(xml: &str, nav_path: &str) -> HashMap<String, String> 
         .find(|node| node.tag_name().name() == "nav" && has_epub_type(node, "toc"))
         .unwrap_or_else(|| document.root_element());
 
-    toc_nav
+    let mut titles = HashMap::new();
+
+    for node in toc_nav
         .descendants()
         .filter(|node| node.tag_name().name() == "a")
-        .filter_map(|node| {
-            let href = node.attribute("href")?;
-            let title = normalize_reader_text(&node_text(node));
-            if title.is_empty() {
-                return None;
-            }
+    {
+        let Some(href) = node.attribute("href") else {
+            continue;
+        };
+        let title = normalize_reader_text(&node_text(node));
+        if title.is_empty() {
+            continue;
+        }
 
-            Some((normalize_epub_path(&nav_base_dir, href), title))
-        })
-        .collect()
+        titles
+            .entry(normalize_epub_path(&nav_base_dir, href))
+            .or_insert(title);
+    }
+
+    titles
 }
 
 fn has_epub_type(node: &roxmltree::Node<'_, '_>, expected_type: &str) -> bool {
@@ -307,45 +322,56 @@ fn has_epub_type(node: &roxmltree::Node<'_, '_>, expected_type: &str) -> bool {
 }
 
 fn parse_ncx_titles(xml: &str, ncx_path: &str) -> HashMap<String, String> {
-    let Ok(document) = roxmltree::Document::parse(xml) else {
+    let Ok(document) = parse_epub_xml(xml) else {
         return HashMap::new();
     };
     let ncx_base_dir = epub_parent(ncx_path);
 
-    document
+    let mut titles = HashMap::new();
+
+    for node in document
         .descendants()
         .filter(|node| node.tag_name().name() == "navPoint")
-        .filter_map(|node| {
-            let src = node
-                .descendants()
-                .find(|child| child.tag_name().name() == "content")
-                .and_then(|child| child.attribute("src"))?;
-            let title = node
-                .descendants()
-                .find(|child| child.tag_name().name() == "navLabel")
-                .map(node_text)
-                .map(|value| normalize_reader_text(&value))
-                .filter(|value| !value.is_empty())?;
+    {
+        let Some(src) = node
+            .descendants()
+            .find(|child| child.tag_name().name() == "content")
+            .and_then(|child| child.attribute("src"))
+        else {
+            continue;
+        };
+        let Some(title) = node
+            .descendants()
+            .find(|child| child.tag_name().name() == "navLabel")
+            .map(node_text)
+            .map(|value| normalize_reader_text(&value))
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
 
-            Some((normalize_epub_path(&ncx_base_dir, src), title))
-        })
-        .collect()
+        titles
+            .entry(normalize_epub_path(&ncx_base_dir, src))
+            .or_insert(title);
+    }
+
+    titles
 }
 
 fn extract_chapter_heading(xml: &str) -> Option<String> {
-    let document = roxmltree::Document::parse(xml).ok()?;
+    let document = parse_epub_xml(xml).ok()?;
     ["h1", "h2"]
         .iter()
         .find_map(|tag| first_text(&document, tag))
 }
 
 fn extract_document_title(xml: &str) -> Option<String> {
-    let document = roxmltree::Document::parse(xml).ok()?;
+    let document = parse_epub_xml(xml).ok()?;
     first_text(&document, "title")
 }
 
 fn extract_chapter_text(xml: &str) -> String {
-    let Ok(document) = roxmltree::Document::parse(xml) else {
+    let Ok(document) = parse_epub_xml(xml) else {
         return String::new();
     };
     let body = document
@@ -358,12 +384,22 @@ fn extract_chapter_text(xml: &str) -> String {
     normalize_reader_text(&text)
 }
 
+fn parse_epub_xml(xml: &str) -> Result<roxmltree::Document<'_>, roxmltree::Error> {
+    roxmltree::Document::parse_with_options(
+        xml,
+        roxmltree::ParsingOptions {
+            allow_dtd: true,
+            ..roxmltree::ParsingOptions::default()
+        },
+    )
+}
+
 fn first_text(document: &roxmltree::Document<'_>, tag: &str) -> Option<String> {
     document
         .descendants()
         .find(|node| node.tag_name().name() == tag)
-        .and_then(|node| node.text())
-        .map(normalize_reader_text)
+        .map(node_text)
+        .map(|text| normalize_reader_text(&text))
         .filter(|text| !text.is_empty())
 }
 
@@ -583,12 +619,38 @@ mod tests {
     }
 
     #[test]
+    fn extracts_heading_text_after_inline_anchor() {
+        assert_eq!(
+            extract_chapter_heading(
+                "<html><head><title>Repeated Book</title></head><body><h2><a id=\"chapter\"/>Actual Chapter</h2></body></html>"
+            )
+            .as_deref(),
+            Some("Actual Chapter")
+        );
+    }
+
+    #[test]
     fn extracts_normalized_chapter_text() {
         assert_eq!(
             extract_chapter_text(
                 "<html><head><style>Ignore</style></head><body><nav>Skip me</nav><p>Hello</p><script>Nope</script><p>reader.</p></body></html>"
             ),
             "Hello reader."
+        );
+    }
+
+    #[test]
+    fn extracts_chapter_text_from_xhtml_with_doctype() {
+        assert_eq!(
+            extract_chapter_text(
+                r#"<?xml version="1.0" encoding="utf-8"?>
+                <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"
+                  "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+                <html xmlns="http://www.w3.org/1999/xhtml">
+                  <body><h1>Introduction</h1><p>Readable text.</p></body>
+                </html>"#
+            ),
+            "Introduction Readable text."
         );
     }
 
@@ -609,6 +671,52 @@ mod tests {
         assert_eq!(
             titles.get("OPS/text/deep.xhtml").map(String::as_str),
             Some("Deep Chapter")
+        );
+    }
+
+    #[test]
+    fn parses_ncx_labels_with_doctype_and_namespace() {
+        let titles = parse_ncx_titles(
+            r#"<?xml version="1.0"?>
+            <!DOCTYPE ncx PUBLIC "-//NISO//DTD ncx 2005-1//EN" "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd">
+            <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/">
+              <navMap>
+                <navPoint>
+                  <navLabel><text>Namespaced Chapter</text></navLabel>
+                  <content src="chapter.xhtml" />
+                </navPoint>
+              </navMap>
+            </ncx>"#,
+            "OPS/toc.ncx",
+        );
+
+        assert_eq!(
+            titles.get("OPS/chapter.xhtml").map(String::as_str),
+            Some("Namespaced Chapter")
+        );
+    }
+
+    #[test]
+    fn keeps_first_navigation_label_for_split_files_with_fragments() {
+        let titles = parse_ncx_titles(
+            r#"<ncx>
+              <navMap>
+                <navPoint>
+                  <navLabel><text>About the Author</text></navLabel>
+                  <content src="front.xhtml" />
+                </navPoint>
+                <navPoint>
+                  <navLabel><text>Copyright Page</text></navLabel>
+                  <content src="front.xhtml#copyright" />
+                </navPoint>
+              </navMap>
+            </ncx>"#,
+            "OPS/toc.ncx",
+        );
+
+        assert_eq!(
+            titles.get("OPS/front.xhtml").map(String::as_str),
+            Some("About the Author")
         );
     }
 
@@ -709,6 +817,62 @@ mod tests {
         assert_eq!(book.chapters[0].body, "Hello reader.");
         assert_eq!(book.chapters[1].title, "Encoded Path");
         assert_eq!(book.chapters[1].body, "Second readable chapter.");
+
+        fs::remove_dir_all(temp_dir).ok();
+    }
+
+    #[test]
+    fn imports_navigation_title_before_repeated_document_heading() {
+        let temp_dir = temp_epub_dir();
+        fs::create_dir_all(&temp_dir).expect("temp dir should be created");
+        let epub_path = temp_dir.join("Repeated_Title.epub");
+        write_epub(
+            &epub_path,
+            [
+                (
+                    "META-INF/container.xml",
+                    r#"<?xml version="1.0"?>
+                    <container>
+                      <rootfiles>
+                        <rootfile full-path="OPS/content.opf" />
+                      </rootfiles>
+                    </container>"#,
+                ),
+                (
+                    "OPS/content.opf",
+                    r#"<package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                      <metadata><dc:title>Repeated Book</dc:title></metadata>
+                      <manifest>
+                        <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml" />
+                        <item id="c1" href="text/one.xhtml" media-type="application/xhtml+xml" />
+                      </manifest>
+                      <spine toc="ncx"><itemref idref="c1" /></spine>
+                    </package>"#,
+                ),
+                (
+                    "OPS/toc.ncx",
+                    r#"<ncx>
+                      <navMap>
+                        <navPoint>
+                          <navLabel><text>Actual Chapter Name</text></navLabel>
+                          <content src="text/one.xhtml#start" />
+                        </navPoint>
+                      </navMap>
+                    </ncx>"#,
+                ),
+                (
+                    "OPS/text/one.xhtml",
+                    r#"<html><head><title>Repeated Book</title></head><body>
+                      <h1>Repeated Book</h1>
+                      <p>Readable chapter text.</p>
+                    </body></html>"#,
+                ),
+            ],
+        );
+
+        let book = import_epub_file(&epub_path).expect("epub should import");
+
+        assert_eq!(book.chapters[0].title, "Actual Chapter Name");
 
         fs::remove_dir_all(temp_dir).ok();
     }

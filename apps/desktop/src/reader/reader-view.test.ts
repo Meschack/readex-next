@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { tokenizeReaderText } from "@readex/text";
 import { buildFixtureReaderView, buildReaderViewFromDocument } from "./reader-view";
 
 describe("fixture reader view", () => {
@@ -7,7 +8,9 @@ describe("fixture reader view", () => {
 
     expect(reader.sentences).toHaveLength(5);
     expect(reader.sentences[0]?.id).toBe("fixture-book-mara:chapter-1:sentence-1");
-    expect(reader.sentences[0]?.tokens.some((token) => token.kind === "word")).toBe(true);
+    expect(
+      tokenizeReaderText(reader.sentences[0]?.text ?? "").some((token) => token.kind === "word")
+    ).toBe(true);
     expect(reader.chapters.map((chapter) => chapter.title)).toEqual(["Chapter 1", "Chapter 2"]);
     expect(reader.totalSentenceCount).toBe(8);
   });
@@ -53,7 +56,7 @@ describe("fixture reader view", () => {
         sentenceCount: 1
       }
     ]);
-    expect(reader.sentences[0]?.tokens.map((token) => token.text)).toEqual([
+    expect(tokenizeReaderText(reader.sentences[0]?.text ?? "").map((token) => token.text)).toEqual([
       "Hello",
       " ",
       "reader",

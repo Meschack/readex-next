@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "pnpm dev:desktop",
     "dev:tui": "node scripts/dev-tui.mjs",
+    "dev:stop": "node scripts/dev-stop.mjs",
     "dev:desktop": "pnpm --filter @readex/desktop tauri dev",
     "dev:web": "pnpm --filter @readex/desktop dev",
     "setup:piper": "node scripts/setup-piper-voice.mjs",
