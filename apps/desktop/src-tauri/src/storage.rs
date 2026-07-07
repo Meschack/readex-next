@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{collections::HashMap, fs, path::PathBuf};
 
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -257,20 +257,29 @@ impl ReadexStore {
         let connection = self.connect()?;
         let mut statement = connection
             .prepare(
-                "SELECT
+                "WITH chapter_counts AS (
+                    SELECT book_id, COUNT(*) AS chapter_count
+                    FROM chapters
+                    GROUP BY book_id
+                 ),
+                 sentence_counts AS (
+                    SELECT book_id, COUNT(*) AS sentence_count
+                    FROM sentences
+                    GROUP BY book_id
+                 )
+                 SELECT
                     books.id,
                     books.title,
                     books.author,
                     books.imported_at,
-                    COUNT(DISTINCT chapters.id) AS chapter_count,
-                    COUNT(sentences.id) AS sentence_count,
+                    COALESCE(chapter_counts.chapter_count, 0) AS chapter_count,
+                    COALESCE(sentence_counts.sentence_count, 0) AS sentence_count,
                     reading_positions.chapter_id,
                     COALESCE(reading_positions.sentence_index, 0)
                  FROM books
-                 LEFT JOIN chapters ON chapters.book_id = books.id
-                 LEFT JOIN sentences ON sentences.book_id = books.id
+                 LEFT JOIN chapter_counts ON chapter_counts.book_id = books.id
+                 LEFT JOIN sentence_counts ON sentence_counts.book_id = books.id
                  LEFT JOIN reading_positions ON reading_positions.book_id = books.id
-                 GROUP BY books.id
                  ORDER BY books.imported_at DESC",
             )
             .map_err(|_| "We couldn't read your library.".to_string())?;
@@ -632,6 +641,8 @@ impl ReadexStore {
                     ON chapters(book_id, position);
                 CREATE INDEX IF NOT EXISTS idx_sentences_chapter_position
                     ON sentences(chapter_id, position);
+                CREATE INDEX IF NOT EXISTS idx_sentences_book_chapter_position
+                    ON sentences(book_id, chapter_id, position);
                 CREATE INDEX IF NOT EXISTS idx_bookmarks_book_created
                     ON bookmarks(book_id, created_at);
                 ",
@@ -651,7 +662,7 @@ impl ReadexStore {
                  ORDER BY position ASC",
             )
             .map_err(|_| "We couldn't read that book.".to_string())?;
-        let chapters = statement
+        let mut chapters = statement
             .query_map(params![book_id], |row| {
                 Ok(ReaderChapterView {
                     id: row.get(0)?,
@@ -664,35 +675,44 @@ impl ReadexStore {
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| "We couldn't read that book.".to_string())?;
 
-        chapters
-            .into_iter()
-            .map(|mut chapter| {
-                chapter.sentences = self.read_sentences(connection, &chapter.id)?;
-                Ok(chapter)
-            })
-            .collect()
+        let chapter_indexes = chapters
+            .iter()
+            .enumerate()
+            .map(|(index, chapter)| (chapter.id.clone(), index))
+            .collect::<HashMap<_, _>>();
+
+        for (chapter_id, sentence) in self.read_sentences_for_book(connection, book_id)? {
+            if let Some(chapter_index) = chapter_indexes.get(&chapter_id) {
+                chapters[*chapter_index].sentences.push(sentence);
+            }
+        }
+
+        Ok(chapters)
     }
 
-    fn read_sentences(
+    fn read_sentences_for_book(
         &self,
         connection: &Connection,
-        chapter_id: &str,
-    ) -> Result<Vec<ReaderSentenceView>, String> {
+        book_id: &str,
+    ) -> Result<Vec<(String, ReaderSentenceView)>, String> {
         let mut statement = connection
             .prepare(
-                "SELECT id, position, text FROM sentences
-                 WHERE chapter_id = ?1
-                 ORDER BY position ASC",
+                "SELECT chapter_id, id, position, text FROM sentences
+                 WHERE book_id = ?1
+                 ORDER BY chapter_id ASC, position ASC",
             )
             .map_err(|_| "We couldn't read that chapter.".to_string())?;
 
         let sentences = statement
-            .query_map(params![chapter_id], |row| {
-                Ok(ReaderSentenceView {
-                    id: row.get(0)?,
-                    index: row.get(1)?,
-                    text: row.get(2)?,
-                })
+            .query_map(params![book_id], |row| {
+                Ok((
+                    row.get(0)?,
+                    ReaderSentenceView {
+                        id: row.get(1)?,
+                        index: row.get(2)?,
+                        text: row.get(3)?,
+                    },
+                ))
             })
             .map_err(|_| "We couldn't read that chapter.".to_string())?
             .collect::<Result<Vec<_>, _>>()
@@ -962,6 +982,45 @@ mod tests {
                 .sentence_index,
             1
         );
+
+        fs::remove_dir_all(temp_dir).ok();
+    }
+
+    #[test]
+    fn lists_books_without_multiplying_chapters_by_sentences() {
+        let temp_dir = temp_store_dir();
+        fs::create_dir_all(&temp_dir).expect("test store dir should be created");
+        let store =
+            ReadexStore::open_at(temp_dir.join("readex.sqlite3")).expect("store should initialize");
+
+        store
+            .save_imported_book(ImportedBook {
+                id: "book-counts".to_string(),
+                title: "Counted Book".to_string(),
+                author: "Test Author".to_string(),
+                source_path: "/tmp/counts.epub".to_string(),
+                chapters: vec![
+                    ImportedChapter {
+                        id: "book-counts:chapter-1".to_string(),
+                        title: "Chapter One".to_string(),
+                        index: 0,
+                        body: "First sentence. Second sentence.".to_string(),
+                    },
+                    ImportedChapter {
+                        id: "book-counts:chapter-2".to_string(),
+                        title: "Chapter Two".to_string(),
+                        index: 1,
+                        body: "Third sentence.".to_string(),
+                    },
+                ],
+            })
+            .expect("book should save");
+
+        let books = store.list_books().expect("books should list");
+
+        assert_eq!(books.len(), 1);
+        assert_eq!(books[0].chapter_count, 2);
+        assert_eq!(books[0].sentence_count, 3);
 
         fs::remove_dir_all(temp_dir).ok();
     }
