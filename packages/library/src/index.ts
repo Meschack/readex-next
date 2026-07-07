@@ -30,6 +30,7 @@ export interface BookmarkRef {
 }
 
 export type LibraryBookListState = "ready" | "loading" | "empty-library" | "empty-filter";
+export type LibraryImportOutcome = "added" | "reopened";
 
 export interface ResolveLibraryBookListStateInput {
   totalBookCount: number;
@@ -68,6 +69,12 @@ export function normalizeLibraryQuery(query: string): string {
 
 export function bookmarkedBookIds(bookmarks: BookmarkRef[]): Set<string> {
   return new Set(bookmarks.map((bookmark) => bookmark.bookId));
+}
+
+export function libraryImportNotice(outcome: LibraryImportOutcome): string {
+  return outcome === "reopened"
+    ? "Book already in your library. Reopened it."
+    : "Book added to your library.";
 }
 
 export function hasLibrarySearchQuery(query: string): boolean {

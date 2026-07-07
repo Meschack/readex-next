@@ -18,11 +18,19 @@ export interface SentenceNarration extends SentenceAudio {
 export interface SentenceNarrationRequest extends SentenceRef {
   sentenceIndex: number;
   text: string;
+  voiceId: string;
+}
+
+export interface NarrationVoice {
+  id: string;
+  label: string;
+  locale: string;
 }
 
 export interface AudioSettings {
   playbackRate: number;
   autoAdvance: boolean;
+  voiceId: string;
 }
 
 export interface NarrationGateway {
@@ -43,7 +51,8 @@ export class FakeNarrationGateway implements NarrationGateway {
   private readonly prepared = new Map<string, SentenceNarration>();
 
   async prepareSentenceAudio(request: SentenceNarrationRequest): Promise<SentenceNarration> {
-    const existing = this.prepared.get(request.sentenceId);
+    const key = narrationRequestKey(request);
+    const existing = this.prepared.get(key);
     if (existing != null) return { ...existing, cached: true };
 
     const narration: SentenceNarration = {
@@ -58,7 +67,7 @@ export class FakeNarrationGateway implements NarrationGateway {
       message: null
     };
 
-    this.prepared.set(request.sentenceId, narration);
+    this.prepared.set(key, narration);
     return narration;
   }
 
@@ -120,14 +129,31 @@ export function createPrefetchingNarrationGateway(
   };
 }
 
+export const DEFAULT_NARRATION_VOICE_ID = "en_US-lessac-medium";
+
+export const SUPPORTED_NARRATION_VOICES = [
+  {
+    id: DEFAULT_NARRATION_VOICE_ID,
+    label: "American English",
+    locale: "en-US"
+  },
+  {
+    id: "en_GB-alba-medium",
+    label: "British English",
+    locale: "en-GB"
+  }
+] as const satisfies readonly NarrationVoice[];
+
 export const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
-  playbackRate: 1,
+  playbackRate: 0.9,
+  voiceId: DEFAULT_NARRATION_VOICE_ID,
   autoAdvance: true
 };
 
 export function createAudioSettings(input: Partial<AudioSettings> = {}): AudioSettings {
   return {
     playbackRate: clampPlaybackRate(input.playbackRate ?? DEFAULT_AUDIO_SETTINGS.playbackRate),
+    voiceId: normalizeNarrationVoiceId(input.voiceId),
     autoAdvance: input.autoAdvance ?? DEFAULT_AUDIO_SETTINGS.autoAdvance
   };
 }
@@ -152,9 +178,25 @@ export function estimateSentenceDurationSec(text: string): number {
   return Math.max(1.1, Math.min(12, wordCount * 0.34 + 0.5));
 }
 
+export function isSupportedNarrationVoiceId(voiceId: string): boolean {
+  return SUPPORTED_NARRATION_VOICES.some((voice) => voice.id === voiceId);
+}
+
+export function narrationVoiceLabel(voiceId: string): string {
+  return (
+    SUPPORTED_NARRATION_VOICES.find((voice) => voice.id === voiceId)?.label ??
+    SUPPORTED_NARRATION_VOICES[0].label
+  );
+}
+
 function clampPlaybackRate(rate: number): number {
   if (!Number.isFinite(rate)) return DEFAULT_AUDIO_SETTINGS.playbackRate;
   return Math.min(1.5, Math.max(0.75, rate));
+}
+
+function normalizeNarrationVoiceId(voiceId: string | undefined): string {
+  if (voiceId != null && isSupportedNarrationVoiceId(voiceId)) return voiceId;
+  return DEFAULT_AUDIO_SETTINGS.voiceId;
 }
 
 function narrationRequestKey(request: SentenceNarrationRequest): string {
@@ -163,6 +205,7 @@ function narrationRequestKey(request: SentenceNarrationRequest): string {
     request.chapterId,
     request.sentenceId,
     request.sentenceIndex,
+    request.voiceId,
     request.text
   ].join("\u001f");
 }

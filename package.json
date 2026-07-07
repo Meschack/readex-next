@@ -17,6 +17,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check:native": "cargo check",
+    "qa:real-books": "cargo test real_book_qa_imports_configured_epubs_through_storage_workflow -- --ignored --nocapture",
     "check": "pnpm typecheck && pnpm test && pnpm format",
     "format": "prettier --check .",
     "format:write": "prettier --write ."

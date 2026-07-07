@@ -4,6 +4,7 @@ import {
   filterLibraryBooks,
   hasLibrarySearchQuery,
   isBookInProgress,
+  libraryImportNotice,
   normalizeLibraryQuery,
   resolveLibraryBookListState,
   type BookmarkRef,
@@ -106,5 +107,10 @@ describe("library filters", () => {
         loading: false
       })
     ).toBe("empty-filter");
+  });
+
+  it("keeps import notices specific to the import outcome", () => {
+    expect(libraryImportNotice("added")).toBe("Book added to your library.");
+    expect(libraryImportNotice("reopened")).toBe("Book already in your library. Reopened it.");
   });
 });

@@ -35,6 +35,7 @@ pnpm test
 pnpm build
 pnpm check
 pnpm check:native
+pnpm qa:real-books
 cargo check
 ```
 
@@ -48,6 +49,7 @@ The project includes a small local TUI at `scripts/dev-tui.mjs`. It reads `.dev-
 - tests
 - full JS/TS check
 - native Rust/Tauri check
+- real-book QA
 
 Run it with:
 
@@ -89,6 +91,22 @@ If native checks report missing system packages through `pkg-config`, install th
 
 If `pnpm dev:desktop` reports that port `1420` is already in use, run `pnpm dev:stop` and rerun the command.
 
+## Real-Book QA
+
+Run the release-oriented EPUB workflow check with:
+
+```bash
+pnpm qa:real-books
+```
+
+By default, the test looks for known local EPUB files in `~/Downloads/books`. To use specific files, pass a semicolon-separated list:
+
+```bash
+READEX_QA_EPUBS="/path/book-one.epub;/path/book-two.epub" pnpm qa:real-books
+```
+
+Use at least two books. The check imports each EPUB, verifies chapter titles do not collapse into the book title, saves and reopens reading position, creates a bookmark, searches the imported text, and exports the book data.
+
 ## Local Narration Voice
 
 Readex uses Piper for local neural narration during desktop development.
@@ -105,17 +123,24 @@ This creates a local `.readex/` sandbox containing:
 - `voices/piper`: downloaded Piper voice files
 - `piper-smoke.wav`: a short generated sample proving the voice works
 
-The app looks for the default `en_US-lessac-medium` voice in `.readex/voices/piper` during development. You can override the voice with:
+The default in-app voice is `en_US-lessac-medium` (American English). Install it with:
 
 ```bash
-READEX_PIPER_VOICE=en_US-lessac-medium pnpm setup:piper
+pnpm setup:piper
+```
+
+To install another supported voice for the settings panel, pass it when running setup:
+
+```bash
+READEX_PIPER_VOICE=en_GB-alba-medium pnpm setup:piper
 ```
 
 Advanced overrides:
 
 - `READEX_PIPER_BIN`: exact Piper executable
 - `READEX_PIPER_PYTHON`: exact Python executable with the Piper module installed
-- `READEX_PIPER_MODEL`: exact `.onnx` model path with a matching `.onnx.json` beside it
+- `READEX_PIPER_MODEL`: exact `.onnx` model path with a matching `.onnx.json` beside it; this overrides the in-app voice selection
 - `READEX_PIPER_DATA_DIR`: directory containing downloaded Piper voices
+- `READEX_PIPER_VOICE`: voice to install through `pnpm setup:piper`, and a native fallback for older requests without an explicit in-app voice
 
 If no neural local voice is available, Readex shows a friendly needs-attention state instead of playing robotic system speech.

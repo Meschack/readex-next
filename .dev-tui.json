@@ -37,6 +37,12 @@
       "color": "white"
     },
     {
+      "name": "REAL QA",
+      "dir": ".",
+      "cmd": "pnpm qa:real-books",
+      "color": "red"
+    },
+    {
       "name": "VOICE",
       "dir": ".",
       "cmd": "pnpm setup:piper",

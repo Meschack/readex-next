@@ -11,6 +11,8 @@ import {
 import {
   createAudioSettings,
   createPrefetchingNarrationGateway,
+  DEFAULT_AUDIO_SETTINGS,
+  SUPPORTED_NARRATION_VOICES,
   type AudioSettings,
   type SentenceNarration,
   type SentenceNarrationRequest
@@ -19,6 +21,7 @@ import {
   bookmarkedBookIds,
   filterLibraryBooks,
   hasLibrarySearchQuery,
+  libraryImportNotice,
   resolveLibraryBookListState,
   type LibraryBookFilter,
   type LibraryBookListState
@@ -32,6 +35,7 @@ import {
   movePlayback,
   pausePlayback,
   playPlayback,
+  type ReaderToolTab,
   searchReaderSentences,
   selectPlaybackSentence,
   sentenceMatchesQuery,
@@ -80,8 +84,9 @@ import {
   type ReaderSentenceView,
   type ReaderView
 } from "./reader-view";
+import { createReaderPreferencesRepository } from "./reader-preferences-repository";
 
-type InspectorTab = "word" | "search" | "bookmarks" | "settings";
+type InspectorTab = ReaderToolTab;
 
 interface SelectedWord {
   sentenceId: string;
@@ -104,20 +109,24 @@ export function ReaderExperience() {
   const dictionaryRepository = createDictionaryRepository();
   const audioCacheRepository = createAudioCacheRepository();
   const audioSettingsRepository = createAudioSettingsRepository();
+  const readerPreferencesRepository = createReaderPreferencesRepository();
+  const readerPreferences = readerPreferencesRepository.load();
   const sampleReader = buildFixtureReaderView();
 
   const [reader, setReader] = createSignal<ReaderView>(sampleReader);
   const [libraryBooks, setLibraryBooks] = createSignal<LibraryBookSummary[]>([]);
   const [libraryNotice, setLibraryNotice] = createSignal<string | null>(null);
   const [libraryQuery, setLibraryQuery] = createSignal("");
-  const [libraryFilter, setLibraryFilter] = createSignal<LibraryBookFilter>("all");
+  const [libraryFilter, setLibraryFilter] = createSignal<LibraryBookFilter>(
+    readerPreferences.libraryFilter
+  );
   const [librarySearchResults, setLibrarySearchResults] = createSignal<LibrarySearchResultDto[]>(
     []
   );
   const [bookmarks, setBookmarks] = createSignal<LibraryBookmarkDto[]>([]);
   const [bookmarkNotice, setBookmarkNotice] = createSignal<string | null>(null);
   const [readerSearchQuery, setReaderSearchQuery] = createSignal("");
-  const [inspectorTab, setInspectorTab] = createSignal<InspectorTab>("word");
+  const [inspectorTab, setInspectorTab] = createSignal<InspectorTab>(readerPreferences.toolTab);
   const [isLibraryLoading, setIsLibraryLoading] = createSignal(false);
   const [isLibrarySearching, setIsLibrarySearching] = createSignal(false);
   const [isImporting, setIsImporting] = createSignal(false);
@@ -258,6 +267,13 @@ export function ReaderExperience() {
   });
 
   createEffect(() => {
+    readerPreferencesRepository.save({
+      toolTab: inspectorTab(),
+      libraryFilter: libraryFilter()
+    });
+  });
+
+  createEffect(() => {
     const sentenceId = activeSentence()?.id;
     if (sentenceId == null) return;
 
@@ -301,7 +317,11 @@ export function ReaderExperience() {
     if (currentPlayback.status !== "playing" || sentence == null) return;
 
     const runId = ++narrationRun;
-    const request = createSentenceNarrationRequest(currentReader, sentence);
+    const request = createSentenceNarrationRequest(
+      currentReader,
+      sentence,
+      audioSettings().voiceId
+    );
 
     setIsPreparingNarration(true);
     setNarrationNotice(null);
@@ -458,7 +478,19 @@ export function ReaderExperience() {
   };
 
   const updateAudioSettings = (nextSettings: Partial<AudioSettings>) => {
-    setAudioSettings((current) => createAudioSettings({ ...current, ...nextSettings }));
+    const currentSettings = audioSettings();
+    const nextAudioSettings = createAudioSettings({ ...currentSettings, ...nextSettings });
+
+    if (nextAudioSettings.voiceId !== currentSettings.voiceId) {
+      activeHtmlAudio?.pause();
+      activeHtmlAudio = null;
+      narrationRepository.clearPrefetchedNarrations();
+      setActiveNarration(null);
+      setNarrationNotice(null);
+      setPlayback((current) => pausePlayback(current));
+    }
+
+    setAudioSettings(nextAudioSettings);
   };
 
   const jumpPlaybackStatus = (): PlaybackStatus =>
@@ -581,7 +613,11 @@ export function ReaderExperience() {
     const nextSentence = currentReader.sentences[activeSentenceIndex + 1];
     if (nextSentence == null) return;
 
-    const request = createSentenceNarrationRequest(currentReader, nextSentence);
+    const request = createSentenceNarrationRequest(
+      currentReader,
+      nextSentence,
+      audioSettings().voiceId
+    );
 
     void narrationRepository
       .prefetchSentenceAudio(request)
@@ -686,6 +722,9 @@ export function ReaderExperience() {
   };
 
   const importBook = async () => {
+    if (isImporting()) return;
+
+    const existingBookIds = new Set(libraryBooks().map((book) => book.id));
     setIsImporting(true);
     setLibraryNotice(null);
 
@@ -694,8 +733,9 @@ export function ReaderExperience() {
       if (document == null) return;
 
       const nextReader = buildReaderViewFromDocument(document);
+      const importOutcome = existingBookIds.has(nextReader.book.id) ? "reopened" : "added";
       activateReader(nextReader);
-      setLibraryNotice("Book added to your library.");
+      setLibraryNotice(libraryImportNotice(importOutcome));
       setLibraryBooks(await repository.listBooks());
       await refreshBookmarks(nextReader.book.id);
     } catch (error) {
@@ -1454,6 +1494,7 @@ function ReaderInspector(props: ReaderInspectorProps) {
           audioCacheNotice={props.audioCacheNotice}
           exportNotice={props.exportNotice}
           onAudioSettingsChange={props.onAudioSettingsChange}
+          onResetAudioSettings={() => props.onAudioSettingsChange(DEFAULT_AUDIO_SETTINGS)}
           onRefreshCache={props.onRefreshCache}
           onClearCache={props.onClearCache}
           onExportBook={props.onExportBook}
@@ -1665,6 +1706,7 @@ interface SettingsPanelProps {
   audioCacheNotice: string | null;
   exportNotice: string | null;
   onAudioSettingsChange: (settings: Partial<AudioSettings>) => void;
+  onResetAudioSettings: () => void;
   onRefreshCache: () => void;
   onClearCache: () => void;
   onExportBook: () => void;
@@ -1673,6 +1715,17 @@ interface SettingsPanelProps {
 function SettingsPanel(props: SettingsPanelProps) {
   return (
     <section class="inspector-panel" aria-label="Settings">
+      <label class="field-row">
+        <span>Voice</span>
+        <select
+          value={props.audioSettings.voiceId}
+          onChange={(event) => props.onAudioSettingsChange({ voiceId: event.currentTarget.value })}
+        >
+          <For each={SUPPORTED_NARRATION_VOICES}>
+            {(voice) => <option value={voice.id}>{voice.label}</option>}
+          </For>
+        </select>
+      </label>
       <label class="field-row">
         <span>Speed</span>
         <select
@@ -1699,6 +1752,9 @@ function SettingsPanel(props: SettingsPanelProps) {
         />
         <span>Auto-advance</span>
       </label>
+      <button class="primary-tool-button" type="button" onClick={props.onResetAudioSettings}>
+        Reset narration
+      </button>
       <div class="tool-card">
         <span class="inspector-section-title">Prepared audio</span>
         <p>
@@ -1909,13 +1965,15 @@ function createSampleExport(
 
 function createSentenceNarrationRequest(
   currentReader: ReaderView,
-  sentence: ReaderSentenceView
+  sentence: ReaderSentenceView,
+  voiceId: string
 ): SentenceNarrationRequest {
   return {
     bookId: currentReader.book.id,
     chapterId: currentReader.chapter.id,
     sentenceId: sentence.id,
     sentenceIndex: sentence.index,
+    voiceId,
     text: sentence.text
   };
 }

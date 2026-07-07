@@ -112,3 +112,20 @@ Deliverables:
 Done when:
 
 - the app feels like a usable private reading/listening library.
+
+## Phase 8: Release Readiness Before Visual Polish
+
+Goal: smooth the small daily-use edges before the full UI polish pass.
+
+Deliverables:
+
+- narration preferences with a calmer default speed and explicit voice choice.
+- persisted reader workflow preferences.
+- duplicate import feedback.
+- release QA commands and checklist.
+
+Done when:
+
+- Phase 8 issues are closed by a single release-readiness pass.
+- `pnpm check`, `pnpm build`, and native checks pass.
+- real-book QA is documented and available through a root command.

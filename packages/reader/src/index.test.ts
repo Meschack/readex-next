@@ -4,11 +4,14 @@ import {
   calculateReaderProgress,
   calculateSentenceRenderWindow,
   createPlaybackState,
+  createReaderPreferences,
   finishSentencePlayback,
   movePlayback,
+  parseReaderPreferences,
   playPlayback,
   searchReaderSentences,
   selectPlaybackSentence,
+  serializeReaderPreferences,
   sentenceMatchesQuery
 } from "./index";
 
@@ -142,6 +145,42 @@ describe("sentence render window", () => {
       end: 12,
       hiddenBefore: 0,
       hiddenAfter: 0
+    });
+  });
+});
+
+describe("reader preferences", () => {
+  it("keeps workflow preferences inside supported values", () => {
+    expect(
+      createReaderPreferences({
+        toolTab: "settings",
+        libraryFilter: "bookmarked"
+      })
+    ).toEqual({
+      toolTab: "settings",
+      libraryFilter: "bookmarked"
+    });
+    expect(
+      parseReaderPreferences(
+        JSON.stringify({
+          toolTab: "nope",
+          libraryFilter: "also-nope"
+        })
+      )
+    ).toEqual({
+      toolTab: "word",
+      libraryFilter: "all"
+    });
+    expect(
+      parseReaderPreferences(
+        serializeReaderPreferences({
+          toolTab: "search",
+          libraryFilter: "in-progress"
+        })
+      )
+    ).toEqual({
+      toolTab: "search",
+      libraryFilter: "in-progress"
     });
   });
 });

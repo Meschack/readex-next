@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createAudioSettings,
   createPrefetchingNarrationGateway,
+  DEFAULT_NARRATION_VOICE_ID,
   FakeNarrationGateway,
   estimateSentenceDurationSec,
   parseAudioSettings,
@@ -19,6 +20,7 @@ describe("sentence narration", () => {
       chapterId: "chapter",
       sentenceId: "sentence",
       sentenceIndex: 0,
+      voiceId: DEFAULT_NARRATION_VOICE_ID,
       text: "Hello reader."
     };
 
@@ -41,17 +43,31 @@ describe("sentence narration", () => {
   it("keeps audio settings inside supported playback behavior", () => {
     expect(createAudioSettings({ playbackRate: 8, autoAdvance: false })).toEqual({
       playbackRate: 1.5,
+      voiceId: DEFAULT_NARRATION_VOICE_ID,
       autoAdvance: false
     });
     expect(parseAudioSettings("{nope")).toEqual({
-      playbackRate: 1,
+      playbackRate: 0.9,
+      voiceId: DEFAULT_NARRATION_VOICE_ID,
       autoAdvance: true
     });
     expect(
-      parseAudioSettings(serializeAudioSettings({ playbackRate: 0.9, autoAdvance: false }))
+      parseAudioSettings(
+        serializeAudioSettings({
+          playbackRate: 0.9,
+          voiceId: "en_GB-alba-medium",
+          autoAdvance: false
+        })
+      )
     ).toEqual({
       playbackRate: 0.9,
+      voiceId: "en_GB-alba-medium",
       autoAdvance: false
+    });
+    expect(createAudioSettings({ voiceId: "nope" })).toEqual({
+      playbackRate: 0.9,
+      voiceId: DEFAULT_NARRATION_VOICE_ID,
+      autoAdvance: true
     });
   });
 
@@ -115,6 +131,7 @@ function createRequest(sentenceId: string): SentenceNarrationRequest {
     chapterId: "chapter",
     sentenceId,
     sentenceIndex: Number(sentenceId.split("-").at(-1) ?? 0),
+    voiceId: DEFAULT_NARRATION_VOICE_ID,
     text: sentenceId
   };
 }

@@ -1,6 +1,8 @@
 import type { SentenceRef } from "@readex/domain";
 
 export type PlaybackStatus = "idle" | "playing" | "paused" | "ended";
+export type ReaderToolTab = "word" | "search" | "bookmarks" | "settings";
+export type ReaderLibraryFilterPreference = "all" | "in-progress" | "bookmarked";
 
 export interface ReaderPosition extends SentenceRef {
   offsetSec: number;
@@ -13,6 +15,11 @@ export interface HighlightState {
 export interface ReaderPlaybackState {
   activeSentenceIndex: number;
   status: PlaybackStatus;
+}
+
+export interface ReaderPreferences {
+  toolTab: ReaderToolTab;
+  libraryFilter: ReaderLibraryFilterPreference;
 }
 
 export interface SearchableSentence {
@@ -66,6 +73,34 @@ export function createPlaybackState(): ReaderPlaybackState {
     activeSentenceIndex: 0,
     status: "idle"
   };
+}
+
+export const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
+  toolTab: "word",
+  libraryFilter: "all"
+};
+
+export function createReaderPreferences(input: Partial<ReaderPreferences> = {}): ReaderPreferences {
+  return {
+    toolTab: isReaderToolTab(input.toolTab) ? input.toolTab : DEFAULT_READER_PREFERENCES.toolTab,
+    libraryFilter: isReaderLibraryFilter(input.libraryFilter)
+      ? input.libraryFilter
+      : DEFAULT_READER_PREFERENCES.libraryFilter
+  };
+}
+
+export function serializeReaderPreferences(preferences: ReaderPreferences): string {
+  return JSON.stringify(createReaderPreferences(preferences));
+}
+
+export function parseReaderPreferences(value: string | null): ReaderPreferences {
+  if (value == null) return DEFAULT_READER_PREFERENCES;
+
+  try {
+    return createReaderPreferences(JSON.parse(value) as Partial<ReaderPreferences>);
+  } catch {
+    return DEFAULT_READER_PREFERENCES;
+  }
 }
 
 export function playPlayback(
@@ -250,6 +285,14 @@ export function calculateSentenceRenderWindow(
 
 function normalizeReaderSearchQuery(query: string): string {
   return query.normalize("NFKC").trim().toLocaleLowerCase().replace(/\s+/g, " ");
+}
+
+function isReaderToolTab(value: unknown): value is ReaderToolTab {
+  return value === "word" || value === "search" || value === "bookmarks" || value === "settings";
+}
+
+function isReaderLibraryFilter(value: unknown): value is ReaderLibraryFilterPreference {
+  return value === "all" || value === "in-progress" || value === "bookmarked";
 }
 
 function createSearchExcerpt(text: string, normalizedQuery: string): string {

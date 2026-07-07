@@ -11,7 +11,7 @@ use tauri::{AppHandle, Manager};
 
 const DEFAULT_PIPER_VOICE: &str = "en_US-lessac-medium";
 const MISSING_NEURAL_VOICE_MESSAGE: &str = "Install a natural local voice to listen offline.";
-const NARRATION_CACHE_VERSION: &str = "piper-v1";
+const NARRATION_CACHE_VERSION: &str = "piper-v2";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,6 +20,8 @@ pub struct SentenceAudioRequest {
     pub chapter_id: String,
     pub sentence_id: String,
     pub sentence_index: i64,
+    #[serde(default = "default_piper_voice_id")]
+    pub voice_id: String,
     pub text: String,
 }
 
@@ -64,6 +66,7 @@ struct SentenceAudioCache {
     app_data_dir: PathBuf,
     dir: PathBuf,
     audio_path: PathBuf,
+    request_voice_id: String,
 }
 
 pub fn prepare_narration(
@@ -182,7 +185,7 @@ impl PiperRuntime {
     fn resolve(cache: &SentenceAudioCache) -> Option<Self> {
         Some(Self {
             runner: PiperRunner::resolve()?,
-            voice: PiperVoice::resolve(cache)?,
+            voice: PiperVoice::resolve(cache, &cache.request_voice_id)?,
         })
     }
 
@@ -260,7 +263,7 @@ struct PiperVoice {
 }
 
 impl PiperVoice {
-    fn resolve(cache: &SentenceAudioCache) -> Option<Self> {
+    fn resolve(cache: &SentenceAudioCache, requested_voice: &str) -> Option<Self> {
         if let Some(model) = env_path("READEX_PIPER_MODEL").filter(|path| piper_model_exists(path))
         {
             return Some(Self {
@@ -269,10 +272,15 @@ impl PiperVoice {
             });
         }
 
-        let voice = env::var("READEX_PIPER_VOICE")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| DEFAULT_PIPER_VOICE.to_string());
+        let requested_voice = requested_voice.trim();
+        let voice = if requested_voice.is_empty() {
+            env::var("READEX_PIPER_VOICE")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| DEFAULT_PIPER_VOICE.to_string())
+        } else {
+            requested_voice.to_string()
+        };
 
         piper_data_dirs(cache)
             .into_iter()
@@ -334,6 +342,7 @@ impl SentenceAudioCache {
             app_data_dir,
             audio_path: dir.join("sentence.wav"),
             dir,
+            request_voice_id: narration_voice_id(request),
         }
     }
 }
@@ -347,6 +356,7 @@ impl SentenceAudioCache {
             app_data_dir,
             audio_path: dir.join("sentence.wav"),
             dir,
+            request_voice_id: narration_voice_id(request),
         }
     }
 }
@@ -503,8 +513,22 @@ fn cache_key(request: &SentenceAudioRequest) -> String {
     hasher.update(request.book_id.as_bytes());
     hasher.update(request.chapter_id.as_bytes());
     hasher.update(request.sentence_id.as_bytes());
+    hasher.update(narration_voice_id(request).as_bytes());
     hasher.update(request.text.as_bytes());
     hex_prefix(&hasher.finalize(), 32)
+}
+
+fn narration_voice_id(request: &SentenceAudioRequest) -> String {
+    let voice = request.voice_id.trim();
+    if voice.is_empty() {
+        DEFAULT_PIPER_VOICE.to_string()
+    } else {
+        voice.to_string()
+    }
+}
+
+fn default_piper_voice_id() -> String {
+    DEFAULT_PIPER_VOICE.to_string()
 }
 
 fn estimate_duration_sec(text: &str) -> f64 {
@@ -556,6 +580,7 @@ mod tests {
     use super::{
         piper_model_exists, piper_voice_exists, summarize_audio_cache_at, FakeSpeechAdapter,
         LocalSpeechAdapter, PiperRuntime, SentenceAudioCache, SentenceAudioRequest, SpeechAdapter,
+        DEFAULT_PIPER_VOICE,
     };
 
     #[test]
@@ -565,6 +590,7 @@ mod tests {
             chapter_id: "chapter".to_string(),
             sentence_id: "sentence".to_string(),
             sentence_index: 0,
+            voice_id: DEFAULT_PIPER_VOICE.to_string(),
             text: "Hello reader.".to_string(),
         };
         let temp_dir = temp_audio_dir();
@@ -591,12 +617,39 @@ mod tests {
     }
 
     #[test]
+    fn selected_voice_partitions_prepared_audio_cache() {
+        let first_request = SentenceAudioRequest {
+            book_id: "book".to_string(),
+            chapter_id: "chapter".to_string(),
+            sentence_id: "sentence".to_string(),
+            sentence_index: 0,
+            voice_id: DEFAULT_PIPER_VOICE.to_string(),
+            text: "Hello reader.".to_string(),
+        };
+        let second_request = SentenceAudioRequest {
+            voice_id: "en_GB-alba-medium".to_string(),
+            ..first_request.clone()
+        };
+        let temp_dir = temp_audio_dir();
+
+        let first_cache =
+            SentenceAudioCache::for_root(temp_dir.clone(), temp_dir.join("audio"), &first_request);
+        let second_cache =
+            SentenceAudioCache::for_root(temp_dir.clone(), temp_dir.join("audio"), &second_request);
+
+        assert_ne!(first_cache.dir, second_cache.dir);
+
+        fs::remove_dir_all(temp_dir).ok();
+    }
+
+    #[test]
     fn local_adapter_generates_and_reuses_piper_audio_when_available() {
         let request = SentenceAudioRequest {
             book_id: "book".to_string(),
             chapter_id: "chapter".to_string(),
             sentence_id: "piper-sentence".to_string(),
             sentence_index: 0,
+            voice_id: DEFAULT_PIPER_VOICE.to_string(),
             text: "Readex is ready to listen.".to_string(),
         };
         let temp_dir = temp_audio_dir();
