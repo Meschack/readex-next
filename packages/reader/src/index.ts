@@ -20,6 +20,7 @@ export interface ReaderPlaybackState {
 export interface ReaderPreferences {
   toolTab: ReaderToolTab;
   libraryFilter: ReaderLibraryFilterPreference;
+  contentFontSize: number;
 }
 
 export interface SearchableSentence {
@@ -90,7 +91,8 @@ export function createPlaybackState(): ReaderPlaybackState {
 
 export const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
   toolTab: "word",
-  libraryFilter: "all"
+  libraryFilter: "all",
+  contentFontSize: 16
 };
 
 export function createReaderPreferences(input: Partial<ReaderPreferences> = {}): ReaderPreferences {
@@ -98,7 +100,10 @@ export function createReaderPreferences(input: Partial<ReaderPreferences> = {}):
     toolTab: isReaderToolTab(input.toolTab) ? input.toolTab : DEFAULT_READER_PREFERENCES.toolTab,
     libraryFilter: isReaderLibraryFilter(input.libraryFilter)
       ? input.libraryFilter
-      : DEFAULT_READER_PREFERENCES.libraryFilter
+      : DEFAULT_READER_PREFERENCES.libraryFilter,
+    contentFontSize: clampContentFontSize(
+      input.contentFontSize ?? DEFAULT_READER_PREFERENCES.contentFontSize
+    )
   };
 }
 
@@ -353,6 +358,11 @@ function isReaderToolTab(value: unknown): value is ReaderToolTab {
 
 function isReaderLibraryFilter(value: unknown): value is ReaderLibraryFilterPreference {
   return value === "all" || value === "in-progress" || value === "bookmarked";
+}
+
+function clampContentFontSize(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_READER_PREFERENCES.contentFontSize;
+  return Math.min(24, Math.max(14, Math.round(value)));
 }
 
 function createSearchExcerpt(text: string, normalizedQuery: string): string {

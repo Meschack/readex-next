@@ -2,6 +2,7 @@ export interface LibraryBookSummary {
   id: string;
   title: string;
   author: string;
+  coverImageSrc?: string | null;
   importedAt: string;
   chapterCount: number;
   sentenceCount: number;
@@ -14,6 +15,7 @@ export interface ReaderDocumentDto {
     id: string;
     title: string;
     author: string;
+    coverImageSrc?: string | null;
   };
   activeChapterId: string | null;
   chapters: ReaderChapterDto[];
@@ -25,6 +27,13 @@ export interface ReaderChapterDto {
   title: string;
   index: number;
   sentenceCount: number;
+  sentences: ReaderSentenceDto[];
+  paragraphs?: ReaderParagraphDto[];
+}
+
+export interface ReaderParagraphDto {
+  id: string;
+  index: number;
   sentences: ReaderSentenceDto[];
 }
 

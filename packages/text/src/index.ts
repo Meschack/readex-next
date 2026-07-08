@@ -3,6 +3,11 @@ export interface SentenceSegment {
   index: number;
 }
 
+export interface ParagraphSegment {
+  index: number;
+  sentences: SentenceSegment[];
+}
+
 export type ReaderTextToken =
   | {
       kind: "word";
@@ -26,7 +31,23 @@ export function normalizeReaderText(input: string): string {
     .replace(/([A-Za-z])-\s+([a-z])/g, "$1$2")
     .replace(/[‐‑‒–—]/g, "-")
     .replace(/\s+/g, " ")
+    .replace(/\s+([.,;:!?)\]])/g, "$1")
     .trim();
+}
+
+export function normalizeReaderParagraphs(input: string): string {
+  return input
+    .replace(/\u00a0/g, " ")
+    .replace(/\u00ad/g, "")
+    .replace(/[\u200b-\u200d\ufeff]/g, "")
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/([A-Za-z])-\s+([a-z])/g, "$1$2")
+    .replace(/[‐‑‒–—]/g, "-")
+    .split(/\n{2,}/)
+    .map(normalizeReaderText)
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 export function segmentSentences(input: string): SentenceSegment[] {
@@ -38,6 +59,27 @@ export function segmentSentences(input: string): SentenceSegment[] {
     .map(normalizeReaderText)
     .filter(Boolean)
     .map((text, index) => ({ text, index }));
+}
+
+export function segmentParagraphs(input: string): ParagraphSegment[] {
+  const normalized = normalizeReaderParagraphs(input);
+  if (!normalized) return [];
+
+  let sentenceOffset = 0;
+
+  return normalized
+    .split("\n\n")
+    .map((paragraph) => {
+      const sentences = segmentSentences(paragraph).map((sentence) => ({
+        ...sentence,
+        index: sentence.index + sentenceOffset
+      }));
+      sentenceOffset += sentences.length;
+
+      return sentences;
+    })
+    .filter((sentences) => sentences.length > 0)
+    .map((sentences, index) => ({ index, sentences }));
 }
 
 export function tokenizeReaderText(input: string): ReaderTextToken[] {

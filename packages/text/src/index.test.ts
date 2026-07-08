@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { normalizeReaderText, segmentSentences, tokenizeReaderText } from "./index";
+import {
+  normalizeReaderParagraphs,
+  normalizeReaderText,
+  segmentParagraphs,
+  segmentSentences,
+  tokenizeReaderText
+} from "./index";
 
 describe("reader text", () => {
   it("normalizes typography and spacing for display and narration", () => {
@@ -12,6 +18,25 @@ describe("reader text", () => {
     expect(segmentSentences("First sentence. Second sentence follows.")).toEqual([
       { text: "First sentence.", index: 0 },
       { text: "Second sentence follows.", index: 1 }
+    ]);
+  });
+
+  it("preserves paragraph boundaries for reader display", () => {
+    expect(normalizeReaderParagraphs("First paragraph.\n\nSecond\u00a0paragraph .")).toBe(
+      "First paragraph.\n\nSecond paragraph."
+    );
+    expect(segmentParagraphs("First sentence. Second sentence.\n\nThird sentence.")).toEqual([
+      {
+        index: 0,
+        sentences: [
+          { text: "First sentence.", index: 0 },
+          { text: "Second sentence.", index: 1 }
+        ]
+      },
+      {
+        index: 1,
+        sentences: [{ text: "Third sentence.", index: 2 }]
+      }
     ]);
   });
 

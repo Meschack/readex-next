@@ -237,33 +237,39 @@ describe("reader preferences", () => {
     expect(
       createReaderPreferences({
         toolTab: "settings",
-        libraryFilter: "bookmarked"
+        libraryFilter: "bookmarked",
+        contentFontSize: 19
       })
     ).toEqual({
       toolTab: "settings",
-      libraryFilter: "bookmarked"
+      libraryFilter: "bookmarked",
+      contentFontSize: 19
     });
     expect(
       parseReaderPreferences(
         JSON.stringify({
           toolTab: "nope",
-          libraryFilter: "also-nope"
+          libraryFilter: "also-nope",
+          contentFontSize: 900
         })
       )
     ).toEqual({
       toolTab: "word",
-      libraryFilter: "all"
+      libraryFilter: "all",
+      contentFontSize: 24
     });
     expect(
       parseReaderPreferences(
         serializeReaderPreferences({
           toolTab: "search",
-          libraryFilter: "in-progress"
+          libraryFilter: "in-progress",
+          contentFontSize: 13
         })
       )
     ).toEqual({
       toolTab: "search",
-      libraryFilter: "in-progress"
+      libraryFilter: "in-progress",
+      contentFontSize: 14
     });
   });
 });

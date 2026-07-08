@@ -6,16 +6,18 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use base64::{engine::general_purpose::STANDARD as base64_standard, Engine as _};
 use sha2::{Digest, Sha256};
 use zip::ZipArchive;
 
-use crate::text::normalize_reader_text;
+use crate::text::{normalize_reader_paragraphs, normalize_reader_text};
 
 #[derive(Debug, Clone)]
 pub struct ImportedBook {
     pub id: String,
     pub title: String,
     pub author: String,
+    pub cover_image_src: Option<String>,
     pub source_path: String,
     pub chapters: Vec<ImportedChapter>,
 }
@@ -91,6 +93,7 @@ pub fn import_epub_file(path: &Path) -> Result<ImportedBook, ImportError> {
     let opf = read_zip_text(&mut archive, &opf_path).ok_or(ImportError::MissingPackage)?;
     let package = parse_package(&opf, &opf_path).ok_or(ImportError::MissingPackage)?;
     let navigation_titles = read_navigation_titles(&mut archive, &package);
+    let cover_image_src = read_cover_image_src(&mut archive, &package);
     let mut chapters = Vec::new();
 
     for (chapter_index, item) in package.spine.iter().enumerate() {
@@ -138,6 +141,7 @@ pub fn import_epub_file(path: &Path) -> Result<ImportedBook, ImportError> {
         author: package
             .author
             .unwrap_or_else(|| "Unknown author".to_string()),
+        cover_image_src,
         source_path: path.to_string_lossy().to_string(),
         chapters,
     })
@@ -152,6 +156,7 @@ struct PackageDocument {
     spine: Vec<SpineItem>,
     nav_path: Option<String>,
     ncx_path: Option<String>,
+    cover_image: Option<CoverImageRef>,
 }
 
 #[derive(Debug, Clone)]
@@ -165,6 +170,12 @@ struct ManifestItem {
 struct SpineItem {
     idref: String,
     linear: bool,
+}
+
+#[derive(Debug, Clone)]
+struct CoverImageRef {
+    path: String,
+    media_type: String,
 }
 
 fn parse_package(xml: &str, opf_path: &str) -> Option<PackageDocument> {
@@ -202,6 +213,7 @@ fn parse_package(xml: &str, opf_path: &str) -> Option<PackageDocument> {
         .and_then(|node| node.attribute("toc"))
         .and_then(|id| all_manifest_items.get(id))
         .map(|item| normalize_epub_path(&epub_parent(opf_path), &item.href));
+    let cover_image = resolve_cover_image(&document, &epub_parent(opf_path), &all_manifest_items);
     let spine = document
         .descendants()
         .filter(|node| node.tag_name().name() == "itemref")
@@ -229,6 +241,7 @@ fn parse_package(xml: &str, opf_path: &str) -> Option<PackageDocument> {
         spine,
         nav_path,
         ncx_path,
+        cover_image,
     })
 }
 
@@ -241,6 +254,89 @@ fn is_readable_manifest_item(item: &ManifestItem) -> bool {
         || href.ends_with(".xhtml")
         || href.ends_with(".html")
         || href.ends_with(".htm")
+}
+
+fn resolve_cover_image(
+    document: &roxmltree::Document<'_>,
+    base_dir: &str,
+    manifest_items: &HashMap<String, ManifestItem>,
+) -> Option<CoverImageRef> {
+    let metadata_cover_id = document
+        .descendants()
+        .find(|node| {
+            node.tag_name().name() == "meta"
+                && node
+                    .attribute("name")
+                    .is_some_and(|name| name.eq_ignore_ascii_case("cover"))
+        })
+        .and_then(|node| node.attribute("content"));
+
+    metadata_cover_id
+        .and_then(|id| manifest_items.get(id))
+        .and_then(|item| cover_ref_from_manifest_item(base_dir, item))
+        .or_else(|| {
+            manifest_items
+                .values()
+                .find(|item| {
+                    item.properties
+                        .split_whitespace()
+                        .any(|property| property == "cover-image")
+                })
+                .and_then(|item| cover_ref_from_manifest_item(base_dir, item))
+        })
+        .or_else(|| {
+            manifest_items
+                .values()
+                .filter_map(|item| cover_ref_from_manifest_item(base_dir, item))
+                .find(|cover| {
+                    let file_name = cover.path.to_ascii_lowercase();
+                    file_name.contains("cover") || file_name.contains("front")
+                })
+        })
+}
+
+fn cover_ref_from_manifest_item(base_dir: &str, item: &ManifestItem) -> Option<CoverImageRef> {
+    let media_type = image_media_type(item)?;
+
+    Some(CoverImageRef {
+        path: normalize_epub_path(base_dir, &item.href),
+        media_type,
+    })
+}
+
+fn image_media_type(item: &ManifestItem) -> Option<String> {
+    let media_type = item.media_type.to_ascii_lowercase();
+    if media_type.starts_with("image/") {
+        return Some(media_type);
+    }
+
+    let href = strip_href_fragment(&item.href).to_ascii_lowercase();
+    let inferred = if href.ends_with(".jpg") || href.ends_with(".jpeg") {
+        "image/jpeg"
+    } else if href.ends_with(".png") {
+        "image/png"
+    } else if href.ends_with(".gif") {
+        "image/gif"
+    } else if href.ends_with(".webp") {
+        "image/webp"
+    } else if href.ends_with(".svg") {
+        "image/svg+xml"
+    } else {
+        return None;
+    };
+
+    Some(inferred.to_string())
+}
+
+fn read_cover_image_src(
+    archive: &mut ZipArchive<Cursor<Vec<u8>>>,
+    package: &PackageDocument,
+) -> Option<String> {
+    let cover = package.cover_image.as_ref()?;
+    let bytes = read_zip_bytes(archive, &cover.path)?;
+    let encoded = base64_standard.encode(bytes);
+
+    Some(format!("data:{};base64,{}", cover.media_type, encoded))
 }
 
 fn find_package_path(container_xml: &str) -> Option<String> {
@@ -378,10 +474,15 @@ fn extract_chapter_text(xml: &str) -> String {
         .descendants()
         .find(|node| node.tag_name().name() == "body")
         .unwrap_or_else(|| document.root_element());
-    let mut text = String::new();
+    let blocks = collect_reading_blocks(body);
 
-    collect_text(body, &mut text);
-    normalize_reader_text(&text)
+    if blocks.is_empty() {
+        let mut text = String::new();
+        collect_text(body, &mut text);
+        return normalize_reader_text(&text);
+    }
+
+    normalize_reader_paragraphs(&blocks.join("\n\n"))
 }
 
 fn parse_epub_xml(xml: &str) -> Result<roxmltree::Document<'_>, roxmltree::Error> {
@@ -420,6 +521,35 @@ fn collect_text(node: roxmltree::Node<'_, '_>, text: &mut String) {
     }
 }
 
+fn collect_reading_blocks(root: roxmltree::Node<'_, '_>) -> Vec<String> {
+    root.descendants()
+        .filter(|node| node.is_element())
+        .filter(|node| is_reading_block(*node))
+        .filter(|node| !should_skip_text_node(*node))
+        .filter(|node| !has_reading_block_ancestor(*node, root))
+        .map(node_text)
+        .map(|text| normalize_reader_text(&text))
+        .filter(|text| !text.is_empty())
+        .collect()
+}
+
+fn is_reading_block(node: roxmltree::Node<'_, '_>) -> bool {
+    matches!(
+        node.tag_name().name(),
+        "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "li" | "blockquote" | "pre"
+    )
+}
+
+fn has_reading_block_ancestor(
+    node: roxmltree::Node<'_, '_>,
+    root: roxmltree::Node<'_, '_>,
+) -> bool {
+    node.ancestors()
+        .take_while(|ancestor| *ancestor != root)
+        .skip(1)
+        .any(is_reading_block)
+}
+
 fn should_skip_text_node(node: roxmltree::Node<'_, '_>) -> bool {
     node.ancestors().any(|ancestor| {
         matches!(
@@ -447,6 +577,13 @@ fn read_zip_text(archive: &mut ZipArchive<Cursor<Vec<u8>>>, path: &str) -> Optio
     let mut text = String::new();
     file.read_to_string(&mut text).ok()?;
     Some(text)
+}
+
+fn read_zip_bytes(archive: &mut ZipArchive<Cursor<Vec<u8>>>, path: &str) -> Option<Vec<u8>> {
+    let mut file = archive.by_name(path).ok()?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).ok()?;
+    Some(bytes)
 }
 
 fn epub_parent(path: &str) -> String {
@@ -635,7 +772,7 @@ mod tests {
             extract_chapter_text(
                 "<html><head><style>Ignore</style></head><body><nav>Skip me</nav><p>Hello</p><script>Nope</script><p>reader.</p></body></html>"
             ),
-            "Hello reader."
+            "Hello\n\nreader."
         );
     }
 
@@ -650,7 +787,7 @@ mod tests {
                   <body><h1>Introduction</h1><p>Readable text.</p></body>
                 </html>"#
             ),
-            "Introduction Readable text."
+            "Introduction\n\nReadable text."
         );
     }
 
@@ -873,6 +1010,101 @@ mod tests {
         let book = import_epub_file(&epub_path).expect("epub should import");
 
         assert_eq!(book.chapters[0].title, "Actual Chapter Name");
+
+        fs::remove_dir_all(temp_dir).ok();
+    }
+
+    #[test]
+    fn imports_epub2_metadata_cover_image() {
+        let temp_dir = temp_epub_dir();
+        fs::create_dir_all(&temp_dir).expect("temp dir should be created");
+        let epub_path = temp_dir.join("Covered_Book.epub");
+        write_epub(
+            &epub_path,
+            [
+                (
+                    "META-INF/container.xml",
+                    r#"<?xml version="1.0"?>
+                    <container>
+                      <rootfiles>
+                        <rootfile full-path="OPS/content.opf" />
+                      </rootfiles>
+                    </container>"#,
+                ),
+                (
+                    "OPS/content.opf",
+                    r#"<package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                      <metadata>
+                        <dc:title>Covered Book</dc:title>
+                        <meta name="cover" content="cover-jpg" />
+                      </metadata>
+                      <manifest>
+                        <item id="cover-jpg" href="images/cover.jpg" media-type="image/jpeg" />
+                        <item id="c1" href="text/one.xhtml" media-type="application/xhtml+xml" />
+                      </manifest>
+                      <spine><itemref idref="c1" /></spine>
+                    </package>"#,
+                ),
+                ("OPS/images/cover.jpg", "fake-cover"),
+                (
+                    "OPS/text/one.xhtml",
+                    r#"<html><body><p>Readable covered chapter.</p></body></html>"#,
+                ),
+            ],
+        );
+
+        let book = import_epub_file(&epub_path).expect("epub should import");
+
+        assert_eq!(
+            book.cover_image_src.as_deref(),
+            Some("data:image/jpeg;base64,ZmFrZS1jb3Zlcg==")
+        );
+
+        fs::remove_dir_all(temp_dir).ok();
+    }
+
+    #[test]
+    fn imports_epub3_manifest_cover_image() {
+        let temp_dir = temp_epub_dir();
+        fs::create_dir_all(&temp_dir).expect("temp dir should be created");
+        let epub_path = temp_dir.join("Manifest_Cover.epub");
+        write_epub(
+            &epub_path,
+            [
+                (
+                    "META-INF/container.xml",
+                    r#"<?xml version="1.0"?>
+                    <container>
+                      <rootfiles>
+                        <rootfile full-path="EPUB/content.opf" />
+                      </rootfiles>
+                    </container>"#,
+                ),
+                (
+                    "EPUB/content.opf",
+                    r#"<package xmlns:dc="http://purl.org/dc/elements/1.1/">
+                      <metadata><dc:title>Manifest Cover</dc:title></metadata>
+                      <manifest>
+                        <item id="cover" href="assets/front.png" media-type="image/png" properties="cover-image" />
+                        <item id="c1" href="chapter.xhtml" media-type="application/xhtml+xml" />
+                      </manifest>
+                      <spine><itemref idref="c1" /></spine>
+                    </package>"#,
+                ),
+                ("EPUB/assets/front.png", "png-cover"),
+                (
+                    "EPUB/chapter.xhtml",
+                    r#"<html><body><p>Readable manifest chapter.</p></body></html>"#,
+                ),
+            ],
+        );
+
+        let book = import_epub_file(&epub_path).expect("epub should import");
+
+        assert_eq!(
+            book.cover_image_src.as_deref(),
+            Some("data:image/png;base64,cG5nLWNvdmVy")
+        );
 
         fs::remove_dir_all(temp_dir).ok();
     }

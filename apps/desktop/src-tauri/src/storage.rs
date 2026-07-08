@@ -9,7 +9,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::{
     epub_import::ImportedBook,
-    text::{normalize_reader_text, segment_sentences},
+    text::{normalize_reader_paragraphs, segment_paragraphs, segment_sentences},
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -18,6 +18,7 @@ pub struct LibraryBookView {
     pub id: String,
     pub title: String,
     pub author: String,
+    pub cover_image_src: Option<String>,
     pub imported_at: String,
     pub chapter_count: i64,
     pub sentence_count: i64,
@@ -40,6 +41,7 @@ pub struct ReaderBookView {
     pub id: String,
     pub title: String,
     pub author: String,
+    pub cover_image_src: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -49,6 +51,15 @@ pub struct ReaderChapterView {
     pub title: String,
     pub index: i64,
     pub sentence_count: i64,
+    pub sentences: Vec<ReaderSentenceView>,
+    pub paragraphs: Vec<ReaderParagraphView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReaderParagraphView {
+    pub id: String,
+    pub index: i64,
     pub sentences: Vec<ReaderSentenceView>,
 }
 
@@ -172,16 +183,18 @@ impl ReadexStore {
 
         transaction
             .execute(
-                "INSERT INTO books (id, title, author, source_path, imported_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
+                "INSERT INTO books (id, title, author, cover_image_src, source_path, imported_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                  ON CONFLICT(id) DO UPDATE SET
                    title = excluded.title,
                    author = excluded.author,
+                   cover_image_src = excluded.cover_image_src,
                    source_path = excluded.source_path",
                 params![
                     book.id,
                     book.title,
                     book.author,
+                    book.cover_image_src,
                     book.source_path,
                     imported_at
                 ],
@@ -204,7 +217,7 @@ impl ReadexStore {
                         book.id,
                         chapter.title,
                         chapter.index as i64,
-                        normalize_reader_text(&chapter.body)
+                        normalize_reader_paragraphs(&chapter.body)
                     ],
                 )
                 .map_err(|_| "We couldn't save a chapter from that book.".to_string())?;
@@ -273,6 +286,7 @@ impl ReadexStore {
                     books.id,
                     books.title,
                     books.author,
+                    books.cover_image_src,
                     books.imported_at,
                     COALESCE(chapter_counts.chapter_count, 0) AS chapter_count,
                     COALESCE(sentence_counts.sentence_count, 0) AS sentence_count,
@@ -291,11 +305,12 @@ impl ReadexStore {
                     id: row.get(0)?,
                     title: row.get(1)?,
                     author: row.get(2)?,
-                    imported_at: row.get(3)?,
-                    chapter_count: row.get(4)?,
-                    sentence_count: row.get(5)?,
-                    last_chapter_id: row.get(6)?,
-                    last_sentence_index: row.get(7)?,
+                    cover_image_src: row.get(3)?,
+                    imported_at: row.get(4)?,
+                    chapter_count: row.get(5)?,
+                    sentence_count: row.get(6)?,
+                    last_chapter_id: row.get(7)?,
+                    last_sentence_index: row.get(8)?,
                 })
             })
             .map_err(|_| "We couldn't read your library.".to_string())?
@@ -322,8 +337,10 @@ impl ReadexStore {
 
         if let Some(chapter_id) = active_chapter_id.as_deref() {
             let sentences = self.read_sentences_for_chapter(&connection, chapter_id)?;
+            let paragraphs = self.read_paragraphs_for_chapter(&connection, chapter_id)?;
             if let Some(chapter) = chapters.iter_mut().find(|entry| entry.id == chapter_id) {
                 chapter.sentences = sentences;
+                chapter.paragraphs = paragraphs;
             }
         }
 
@@ -600,6 +617,7 @@ impl ReadexStore {
                     id TEXT PRIMARY KEY,
                     title TEXT NOT NULL,
                     author TEXT NOT NULL,
+                    cover_image_src TEXT,
                     source_path TEXT NOT NULL,
                     imported_at TEXT NOT NULL
                 );
@@ -656,19 +674,24 @@ impl ReadexStore {
                     ON bookmarks(book_id, created_at);
                 ",
             )
-            .map_err(|_| "We couldn't prepare the local library.".to_string())
+            .map_err(|_| "We couldn't prepare the local library.".to_string())?;
+
+        ensure_column(&connection, "books", "cover_image_src", "TEXT")?;
+
+        Ok(())
     }
 
     fn read_book(&self, connection: &Connection, book_id: &str) -> Result<ReaderBookView, String> {
         connection
             .query_row(
-                "SELECT id, title, author FROM books WHERE id = ?1",
+                "SELECT id, title, author, cover_image_src FROM books WHERE id = ?1",
                 params![book_id],
                 |row| {
                     Ok(ReaderBookView {
                         id: row.get(0)?,
                         title: row.get(1)?,
                         author: row.get(2)?,
+                        cover_image_src: row.get(3)?,
                     })
                 },
             )
@@ -732,6 +755,7 @@ impl ReadexStore {
                     index: row.get(2)?,
                     sentence_count: row.get(3)?,
                     sentences: Vec::new(),
+                    paragraphs: Vec::new(),
                 })
             })
             .map_err(|_| "We couldn't read that book.".to_string())?
@@ -757,6 +781,10 @@ impl ReadexStore {
             if let Some(chapter_index) = chapter_indexes.get(&chapter_id) {
                 chapters[*chapter_index].sentences.push(sentence);
             }
+        }
+
+        for chapter in &mut chapters {
+            chapter.paragraphs = self.read_paragraphs_for_chapter(connection, &chapter.id)?;
         }
 
         Ok(chapters)
@@ -788,6 +816,49 @@ impl ReadexStore {
             .map_err(|_| "We couldn't read that chapter.".to_string())?;
 
         Ok(sentences)
+    }
+
+    fn read_paragraphs_for_chapter(
+        &self,
+        connection: &Connection,
+        chapter_id: &str,
+    ) -> Result<Vec<ReaderParagraphView>, String> {
+        let body = connection
+            .query_row(
+                "SELECT body FROM chapters WHERE id = ?1",
+                params![chapter_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|_| "We couldn't read that chapter.".to_string())?
+            .unwrap_or_default();
+        let mut sentence_index = 0_i64;
+
+        Ok(segment_paragraphs(&body)
+            .into_iter()
+            .enumerate()
+            .map(|(paragraph_index, sentences)| {
+                let paragraph_sentences = sentences
+                    .into_iter()
+                    .map(|text| {
+                        let current_index = sentence_index;
+                        sentence_index += 1;
+
+                        ReaderSentenceView {
+                            id: format!("{chapter_id}:sentence-{}", current_index + 1),
+                            index: current_index,
+                            text,
+                        }
+                    })
+                    .collect();
+
+                ReaderParagraphView {
+                    id: format!("{chapter_id}:paragraph-{}", paragraph_index + 1),
+                    index: paragraph_index as i64,
+                    sentences: paragraph_sentences,
+                }
+            })
+            .collect())
     }
 
     fn read_sentences_for_book(
@@ -972,6 +1043,38 @@ fn insert_event(
         .map_err(|_| "We couldn't save the library update.".to_string())
 }
 
+fn ensure_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<(), String> {
+    let escaped_table = table.replace('"', "\"\"");
+    let mut statement = connection
+        .prepare(&format!("PRAGMA table_info(\"{escaped_table}\")"))
+        .map_err(|_| "We couldn't prepare the local library.".to_string())?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|_| "We couldn't prepare the local library.".to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| "We couldn't prepare the local library.".to_string())?;
+
+    if columns.iter().any(|name| name == column) {
+        return Ok(());
+    }
+
+    let escaped_column = column.replace('"', "\"\"");
+    connection
+        .execute(
+            &format!(
+                "ALTER TABLE \"{escaped_table}\" ADD COLUMN \"{escaped_column}\" {definition}"
+            ),
+            [],
+        )
+        .map(|_| ())
+        .map_err(|_| "We couldn't prepare the local library.".to_string())
+}
+
 fn read_bookmark_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BookmarkView> {
     Ok(BookmarkView {
         id: row.get(0)?,
@@ -1056,6 +1159,7 @@ mod tests {
         SaveBookmarkRequest, SaveReadingPositionRequest,
     };
     use crate::epub_import::{import_epub_file, ImportedBook, ImportedChapter};
+    use rusqlite::Connection;
 
     #[test]
     fn saves_books_and_restores_reading_position() {
@@ -1068,6 +1172,7 @@ mod tests {
                 id: "book-test".to_string(),
                 title: "Test Book".to_string(),
                 author: "Test Author".to_string(),
+                cover_image_src: None,
                 source_path: "/tmp/test.epub".to_string(),
                 chapters: vec![ImportedChapter {
                     id: "book-test:chapter-1".to_string(),
@@ -1105,6 +1210,63 @@ mod tests {
     }
 
     #[test]
+    fn migrates_existing_books_table_and_persists_cover_image() {
+        let temp_dir = temp_store_dir();
+        fs::create_dir_all(&temp_dir).expect("test store dir should be created");
+        let db_path = temp_dir.join("readex.sqlite3");
+        Connection::open(&db_path)
+            .expect("legacy database should open")
+            .execute_batch(
+                "
+                CREATE TABLE books (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    author TEXT NOT NULL,
+                    source_path TEXT NOT NULL,
+                    imported_at TEXT NOT NULL
+                );
+                ",
+            )
+            .expect("legacy books table should be created");
+        let store = ReadexStore::open_at(db_path).expect("store should migrate");
+        let cover_image_src = "data:image/png;base64,Y292ZXI=".to_string();
+        let document = store
+            .save_imported_book(ImportedBook {
+                id: "book-cover".to_string(),
+                title: "Covered Book".to_string(),
+                author: "Test Author".to_string(),
+                cover_image_src: Some(cover_image_src.clone()),
+                source_path: "/tmp/cover.epub".to_string(),
+                chapters: vec![ImportedChapter {
+                    id: "book-cover:chapter-1".to_string(),
+                    title: "Chapter One".to_string(),
+                    index: 0,
+                    body: "A covered sentence.".to_string(),
+                }],
+            })
+            .expect("book should save after migration");
+        let books = store.list_books().expect("books should list");
+        let reopened = store
+            .open_book("book-cover", None)
+            .expect("book should reopen");
+
+        assert_eq!(
+            document.book.cover_image_src.as_deref(),
+            Some(cover_image_src.as_str())
+        );
+        assert_eq!(
+            books[0].cover_image_src.as_deref(),
+            Some(cover_image_src.as_str())
+        );
+        assert_eq!(
+            reopened.book.cover_image_src.as_deref(),
+            Some(cover_image_src.as_str())
+        );
+
+        fs::remove_dir_all(temp_dir).ok();
+    }
+
+    #[test]
     fn lists_books_without_multiplying_chapters_by_sentences() {
         let temp_dir = temp_store_dir();
         fs::create_dir_all(&temp_dir).expect("test store dir should be created");
@@ -1116,6 +1278,7 @@ mod tests {
                 id: "book-counts".to_string(),
                 title: "Counted Book".to_string(),
                 author: "Test Author".to_string(),
+                cover_image_src: None,
                 source_path: "/tmp/counts.epub".to_string(),
                 chapters: vec![
                     ImportedChapter {
@@ -1155,6 +1318,7 @@ mod tests {
                 id: "book-active".to_string(),
                 title: "Active Book".to_string(),
                 author: "Test Author".to_string(),
+                cover_image_src: None,
                 source_path: "/tmp/active.epub".to_string(),
                 chapters: vec![
                     ImportedChapter {
@@ -1227,6 +1391,7 @@ mod tests {
                 id: "book-search".to_string(),
                 title: "Searchable Book".to_string(),
                 author: "Test Author".to_string(),
+                cover_image_src: None,
                 source_path: "/tmp/search.epub".to_string(),
                 chapters: vec![ImportedChapter {
                     id: "book-search:chapter-1".to_string(),
@@ -1569,6 +1734,7 @@ mod tests {
             id: "synthetic-large-book".to_string(),
             title: "Synthetic Large Book".to_string(),
             author: "Readex QA".to_string(),
+            cover_image_src: None,
             source_path: "synthetic://large-book".to_string(),
             chapters: (0..14)
                 .map(|chapter_index| {

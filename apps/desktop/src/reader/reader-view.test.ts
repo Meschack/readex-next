@@ -27,7 +27,8 @@ describe("fixture reader view", () => {
       book: {
         id: "book-1",
         title: "Imported",
-        author: "Author"
+        author: "Author",
+        coverImageSrc: "data:image/png;base64,Y292ZXI="
       },
       activeChapterId: "chapter-1",
       chapters: [
@@ -49,6 +50,7 @@ describe("fixture reader view", () => {
 
     expect(reader.source).toBe("library");
     expect(reader.book.title).toBe("Imported");
+    expect(reader.book.coverImageSrc).toBe("data:image/png;base64,Y292ZXI=");
     expect(reader.totalSentenceCount).toBe(1);
     expect(reader.chapters).toEqual([
       {
