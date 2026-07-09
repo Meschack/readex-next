@@ -1,0 +1,15 @@
+{
+  "defaultVoiceId": "en_US-lessac-medium",
+  "voices": [
+    {
+      "id": "en_US-lessac-medium",
+      "label": "American English",
+      "locale": "en-US"
+    },
+    {
+      "id": "en_GB-alba-medium",
+      "label": "British English",
+      "locale": "en-GB"
+    }
+  ]
+}

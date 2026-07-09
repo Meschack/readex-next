@@ -1,4 +1,4 @@
-import { createSentenceId } from "@readex/reader";
+import { createSentenceId, normalizeReaderSearchText } from "@readex/reader";
 import { segmentParagraphs, segmentSentences } from "@readex/text";
 import type { ReaderDocumentDto, ReaderSentenceDto } from "./reader-document";
 import { fixtureBook, type FixtureBook } from "./fixture-book";
@@ -7,11 +7,14 @@ export interface ReaderSentenceView {
   id: string;
   index: number;
   text: string;
+  searchText: string;
 }
 
 export interface ReaderParagraphView {
   id: string;
   index: number;
+  startSentenceIndex: number;
+  endSentenceIndex: number;
   sentences: ReaderSentenceView[];
 }
 
@@ -83,7 +86,8 @@ export function buildFixtureReaderView(
   const sentenceViews = sentences.map((sentence) => ({
     id: createSentenceId(book.id, chapter.id, sentence.index),
     index: sentence.index,
-    text: sentence.text
+    text: sentence.text,
+    searchText: normalizeReaderSearchText(sentence.text)
   }));
 
   return {
@@ -142,7 +146,8 @@ export function buildReaderViewFromDocument(
   const sentenceViews = chapter.sentences.map((sentence) => ({
     id: sentence.id,
     index: sentence.index,
-    text: sentence.text
+    text: sentence.text,
+    searchText: normalizeReaderSearchText(sentence.text)
   }));
 
   return {
@@ -198,7 +203,9 @@ function buildParagraphsFromBody(
       .filter((sentence): sentence is ReaderSentenceView => sentence != null)
   }));
 
-  return paragraphs.length > 0 ? paragraphs : chunkSentencesIntoParagraphs(sentences);
+  return paragraphs.length > 0
+    ? paragraphs.map(withParagraphRange)
+    : chunkSentencesIntoParagraphs(sentences);
 }
 
 function buildParagraphsFromDocument(
@@ -217,6 +224,7 @@ function buildParagraphsFromDocument(
           )
           .filter((sentence): sentence is ReaderSentenceView => sentence != null)
       }))
+      .map(withParagraphRange)
       .filter((paragraph) => paragraph.sentences.length > 0);
 
     if (mappedParagraphs.length > 0) return mappedParagraphs;
@@ -237,12 +245,29 @@ function chunkSentencesIntoParagraphs(sentences: ReaderSentenceView[]): ReaderPa
   const paragraphs: ReaderParagraphView[] = [];
 
   for (let index = 0; index < sentences.length; index += chunkSize) {
-    paragraphs.push({
-      id: `fallback-paragraph-${index / chunkSize + 1}`,
-      index: index / chunkSize,
-      sentences: sentences.slice(index, index + chunkSize)
-    });
+    paragraphs.push(
+      withParagraphRange({
+        id: `fallback-paragraph-${index / chunkSize + 1}`,
+        index: index / chunkSize,
+        sentences: sentences.slice(index, index + chunkSize)
+      })
+    );
   }
 
   return paragraphs;
+}
+
+function withParagraphRange(
+  paragraph: Omit<ReaderParagraphView, "startSentenceIndex" | "endSentenceIndex">
+): ReaderParagraphView {
+  const firstSentence = paragraph.sentences[0];
+  const lastSentence = paragraph.sentences[paragraph.sentences.length - 1];
+  const startSentenceIndex = firstSentence?.index ?? 0;
+  const endSentenceIndex = lastSentence == null ? startSentenceIndex : lastSentence.index + 1;
+
+  return {
+    ...paragraph,
+    startSentenceIndex,
+    endSentenceIndex
+  };
 }

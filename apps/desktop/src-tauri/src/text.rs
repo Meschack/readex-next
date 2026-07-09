@@ -46,8 +46,30 @@ fn trim_space_before_punctuation(input: &str) -> String {
     output
 }
 
+#[cfg(test)]
 pub fn segment_sentences(input: &str) -> Vec<String> {
     let normalized = normalize_reader_text(input);
+    segment_normalized_sentences(&normalized)
+}
+
+pub fn segment_paragraphs(input: &str) -> Vec<Vec<String>> {
+    let paragraphs = normalize_reader_paragraphs(input);
+    segment_normalized_paragraphs(&paragraphs)
+}
+
+pub fn segment_normalized_paragraphs(input: &str) -> Vec<Vec<String>> {
+    if input.is_empty() {
+        return Vec::new();
+    }
+
+    input
+        .split("\n\n")
+        .map(segment_normalized_sentences)
+        .filter(|sentences| !sentences.is_empty())
+        .collect()
+}
+
+fn segment_normalized_sentences(normalized: &str) -> Vec<String> {
     let mut sentences = Vec::new();
     let mut start = 0;
     let chars: Vec<(usize, char)> = normalized.char_indices().collect();
@@ -95,23 +117,11 @@ pub fn segment_sentences(input: &str) -> Vec<String> {
     sentences
 }
 
-pub fn segment_paragraphs(input: &str) -> Vec<Vec<String>> {
-    let paragraphs = normalize_reader_paragraphs(input);
-    if paragraphs.is_empty() {
-        return Vec::new();
-    }
-
-    paragraphs
-        .split("\n\n")
-        .map(segment_sentences)
-        .filter(|sentences| !sentences.is_empty())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_reader_paragraphs, normalize_reader_text, segment_paragraphs, segment_sentences,
+        normalize_reader_paragraphs, normalize_reader_text, segment_normalized_paragraphs,
+        segment_paragraphs, segment_sentences,
     };
 
     #[test]
@@ -143,6 +153,20 @@ mod tests {
     fn segments_paragraphs_without_losing_sentence_indexes() {
         assert_eq!(
             segment_paragraphs("First sentence. Second sentence.\n\nThird sentence."),
+            vec![
+                vec![
+                    "First sentence.".to_string(),
+                    "Second sentence.".to_string()
+                ],
+                vec!["Third sentence.".to_string()]
+            ]
+        );
+    }
+
+    #[test]
+    fn segments_already_normalized_paragraphs_without_rewriting_text() {
+        assert_eq!(
+            segment_normalized_paragraphs("First sentence. Second sentence.\n\nThird sentence."),
             vec![
                 vec![
                     "First sentence.".to_string(),

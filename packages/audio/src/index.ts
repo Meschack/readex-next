@@ -1,4 +1,5 @@
 import type { SentenceRef } from "@readex/domain";
+import narrationVoiceConfig from "./narration-voices.json";
 
 export type AudioReadiness = "ready" | "preparing" | "needs-attention" | "unavailable";
 export type NarrationPlaybackMode = "html-audio" | "native-speech";
@@ -129,20 +130,10 @@ export function createPrefetchingNarrationGateway(
   };
 }
 
-export const DEFAULT_NARRATION_VOICE_ID = "en_US-lessac-medium";
+export const DEFAULT_NARRATION_VOICE_ID = narrationVoiceConfig.defaultVoiceId;
 
-export const SUPPORTED_NARRATION_VOICES = [
-  {
-    id: DEFAULT_NARRATION_VOICE_ID,
-    label: "American English",
-    locale: "en-US"
-  },
-  {
-    id: "en_GB-alba-medium",
-    label: "British English",
-    locale: "en-GB"
-  }
-] as const satisfies readonly NarrationVoice[];
+export const SUPPORTED_NARRATION_VOICES =
+  narrationVoiceConfig.voices satisfies readonly NarrationVoice[];
 
 export const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
   playbackRate: 0.9,

@@ -129,7 +129,7 @@ READEX_QA_EPUBS="/path/book-one.epub;/path/book-two.epub" pnpm perf:large-books
 
 Readex uses Piper for local neural narration during desktop development.
 
-Install the default development voice with:
+Install the supported development voices with:
 
 ```bash
 pnpm setup:piper
@@ -139,15 +139,11 @@ This creates a local `.readex/` sandbox containing:
 
 - `piper-venv`: a Python virtual environment with Piper installed
 - `voices/piper`: downloaded Piper voice files
-- `piper-smoke.wav`: a short generated sample proving the voice works
+- `piper-smoke-*.wav`: short generated samples proving each voice works
 
-The default in-app voice is `en_US-lessac-medium` (American English). Install it with:
+The default in-app voice is `en_US-lessac-medium` (American English). `pnpm setup:piper` also installs `en_GB-alba-medium` so the British English option in settings works locally too.
 
-```bash
-pnpm setup:piper
-```
-
-To install another supported voice for the settings panel, pass it when running setup:
+To install only a specific voice while debugging, pass it when running setup:
 
 ```bash
 READEX_PIPER_VOICE=en_GB-alba-medium pnpm setup:piper
@@ -160,5 +156,6 @@ Advanced overrides:
 - `READEX_PIPER_MODEL`: exact `.onnx` model path with a matching `.onnx.json` beside it; this overrides the in-app voice selection
 - `READEX_PIPER_DATA_DIR`: directory containing downloaded Piper voices
 - `READEX_PIPER_VOICE`: voice to install through `pnpm setup:piper`, and a native fallback for older requests without an explicit in-app voice
+- `READEX_PIPER_VOICES`: comma, semicolon, or space separated list of voices to install through `pnpm setup:piper`
 
 If no neural local voice is available, Readex shows a friendly needs-attention state instead of playing robotic system speech.

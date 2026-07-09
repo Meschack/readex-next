@@ -1,0 +1,612 @@
+import { For, Show } from "solid-js";
+import {
+  hasLibrarySearchQuery,
+  type LibraryBookFilter,
+  type LibraryBookListState
+} from "@readex/library";
+import type { LibrarySearchResultDto } from "../library/book-repository";
+import { BookCover } from "./book-cover";
+import type { LibraryBookSummary } from "./reader-document";
+import type { AppView, InspectorTab } from "./reader-experience-types";
+import { libraryProgressPercent } from "./reader-formatting";
+import { isBookRailMode, type LibraryRailMode } from "./library-rail-state";
+import { StateBlock, StateNotice } from "./reader-feedback";
+import type { ReaderChapterNavigationItem } from "./reader-view";
+import {
+  ArrowLeftIcon,
+  BookmarkIcon,
+  HeadphonesIcon,
+  HelpIcon,
+  LibraryIcon,
+  MoreIcon,
+  PlusIcon,
+  ReaderIcon,
+  SearchIcon,
+  SettingsIcon,
+  SlidersIcon,
+  WordIcon
+} from "./reader-icons";
+
+interface LibraryRailProps {
+  mode: LibraryRailMode;
+  activeView: AppView;
+  activeBook: ActiveRailBook;
+  activeChapterId: string;
+  chapters: ReaderChapterNavigationItem[];
+  activeBookId: string;
+  books: LibraryBookSummary[];
+  bookListState: LibraryBookListState;
+  hasLibraryBooks: boolean;
+  query: string;
+  filter: LibraryBookFilter;
+  importing: boolean;
+  searching: boolean;
+  notice: string | null;
+  searchResults: LibrarySearchResultDto[];
+  onQueryChange: (query: string) => void;
+  onFilterChange: (filter: LibraryBookFilter) => void;
+  onImport: () => void;
+  onOpenBook: (bookId: string) => void;
+  onRetryLibrary: () => void;
+  onOpenSample: () => void;
+  onOpenSearchResult: (result: LibrarySearchResultDto) => void;
+  onOpenView: (view: AppView) => void;
+  onOpenToolTab: (tab: InspectorTab) => void;
+  onOpenChapter: (chapterId: string) => void;
+  onReturnToLibrary: () => void;
+}
+
+interface ActiveRailBook {
+  title: string;
+  author: string;
+  coverImageSrc: string | null;
+}
+
+export function LibraryRail(props: LibraryRailProps) {
+  return (
+    <aside
+      classList={{
+        "library-rail": true,
+        "focused-book": isBookRailMode(props.mode)
+      }}
+      aria-label="Library"
+    >
+      <Show
+        when={isBookRailMode(props.mode)}
+        fallback={
+          <NavigationRail
+            activeView={props.activeView}
+            activeBookId={props.activeBookId}
+            books={props.books}
+            bookListState={props.bookListState}
+            hasLibraryBooks={props.hasLibraryBooks}
+            query={props.query}
+            filter={props.filter}
+            importing={props.importing}
+            searching={props.searching}
+            notice={props.notice}
+            searchResults={props.searchResults}
+            onQueryChange={props.onQueryChange}
+            onFilterChange={props.onFilterChange}
+            onImport={props.onImport}
+            onOpenBook={props.onOpenBook}
+            onRetryLibrary={props.onRetryLibrary}
+            onOpenSample={props.onOpenSample}
+            onOpenSearchResult={props.onOpenSearchResult}
+            onOpenView={props.onOpenView}
+            onOpenToolTab={props.onOpenToolTab}
+          />
+        }
+      >
+        <FocusedBookRail
+          book={props.activeBook}
+          chapters={props.chapters}
+          activeChapterId={props.activeChapterId}
+          onOpenChapter={props.onOpenChapter}
+          onReturnToLibrary={props.onReturnToLibrary}
+        />
+      </Show>
+    </aside>
+  );
+}
+
+interface NavigationRailProps {
+  activeView: AppView;
+  activeBookId: string;
+  books: LibraryBookSummary[];
+  bookListState: LibraryBookListState;
+  hasLibraryBooks: boolean;
+  query: string;
+  filter: LibraryBookFilter;
+  importing: boolean;
+  searching: boolean;
+  notice: string | null;
+  searchResults: LibrarySearchResultDto[];
+  onQueryChange: (query: string) => void;
+  onFilterChange: (filter: LibraryBookFilter) => void;
+  onImport: () => void;
+  onOpenBook: (bookId: string) => void;
+  onRetryLibrary: () => void;
+  onOpenSample: () => void;
+  onOpenSearchResult: (result: LibrarySearchResultDto) => void;
+  onOpenView: (view: AppView) => void;
+  onOpenToolTab: (tab: InspectorTab) => void;
+}
+
+function NavigationRail(props: NavigationRailProps) {
+  const hasSearchQuery = () => hasLibrarySearchQuery(props.query);
+
+  return (
+    <>
+      <header class="side-brand">
+        <strong>Readex</strong>
+        <span>Premium Immersive Reading</span>
+      </header>
+
+      <nav class="nav-list" aria-label="Primary">
+        <button
+          classList={{ "nav-link": true, active: props.activeView === "reader" }}
+          type="button"
+          onClick={() => props.onOpenView("reader")}
+        >
+          <ReaderIcon />
+          <span>Reader</span>
+        </button>
+        <details class="library-shelf">
+          <summary
+            classList={{ "nav-link": true, active: props.activeView === "library" }}
+            onClick={(event) => {
+              event.preventDefault();
+              props.onOpenView("library");
+            }}
+          >
+            <LibraryIcon />
+            <span>Library</span>
+          </summary>
+          <section class="library-actions" aria-label="Book library">
+            <div class="library-controls">
+              <input
+                aria-label="Search library"
+                type="search"
+                value={props.query}
+                placeholder="Search library"
+                onInput={(event) => props.onQueryChange(event.currentTarget.value)}
+              />
+              <select
+                aria-label="Library filter"
+                value={props.filter}
+                onChange={(event) =>
+                  props.onFilterChange(event.currentTarget.value as LibraryBookFilter)
+                }
+              >
+                <option value="all">All</option>
+                <option value="in-progress">In progress</option>
+                <option value="bookmarked">Bookmarked</option>
+              </select>
+            </div>
+            <Show when={props.notice}>
+              {(notice) => (
+                <StateNotice message={notice()} onRetry={props.onRetryLibrary} compact />
+              )}
+            </Show>
+            <Show when={hasSearchQuery()}>
+              <LibrarySearchState
+                searching={props.searching}
+                results={props.searchResults}
+                onOpenSearchResult={props.onOpenSearchResult}
+              />
+            </Show>
+            <div class="book-list" role="list">
+              <button
+                classList={{
+                  "book-row": true,
+                  active: props.activeBookId === "fixture-book-mara"
+                }}
+                type="button"
+                onClick={props.onOpenSample}
+              >
+                <span>The Listening Margin</span>
+                <small>Sample book</small>
+              </button>
+              <For each={props.books}>
+                {(book) => (
+                  <button
+                    classList={{
+                      "book-row": true,
+                      active: props.activeBookId === book.id
+                    }}
+                    type="button"
+                    onClick={() => props.onOpenBook(book.id)}
+                  >
+                    <span>{book.title}</span>
+                    <small>
+                      {book.author} · {book.chapterCount} chapter
+                      {book.chapterCount === 1 ? "" : "s"}
+                    </small>
+                  </button>
+                )}
+              </For>
+              <BookListState
+                state={props.bookListState}
+                hasLibraryBooks={props.hasLibraryBooks}
+                importing={props.importing}
+                onImport={props.onImport}
+              />
+            </div>
+          </section>
+        </details>
+        <button class="nav-link" type="button" onClick={() => props.onOpenToolTab("bookmarks")}>
+          <BookmarkIcon />
+          <span>Bookmarks</span>
+        </button>
+        <button class="nav-link" type="button" onClick={() => props.onOpenToolTab("word")}>
+          <WordIcon />
+          <span>Words</span>
+        </button>
+      </nav>
+
+      <section class="side-import">
+        <button
+          class="import-button"
+          type="button"
+          disabled={props.importing}
+          onClick={props.onImport}
+        >
+          <PlusIcon />
+          <span>{props.importing ? "Adding..." : "Add EPUB"}</span>
+        </button>
+      </section>
+
+      <footer class="side-footer">
+        <nav class="nav-list secondary" aria-label="Secondary">
+          <button class="nav-link" type="button" onClick={() => props.onOpenToolTab("settings")}>
+            <SettingsIcon />
+            <span>Settings</span>
+          </button>
+          <button class="nav-link" type="button">
+            <HelpIcon />
+            <span>Support</span>
+          </button>
+        </nav>
+        <div class="reader-avatar">
+          <span aria-hidden="true">R</span>
+          <strong>Reader Avatar</strong>
+        </div>
+      </footer>
+    </>
+  );
+}
+
+interface FocusedBookRailProps extends ActiveBookNavigationProps {
+  onReturnToLibrary: () => void;
+}
+
+function FocusedBookRail(props: FocusedBookRailProps) {
+  return (
+    <section class="book-rail" aria-label="Open book">
+      <button
+        class="book-rail-back"
+        type="button"
+        aria-label="Back to library"
+        onClick={props.onReturnToLibrary}
+      >
+        <ArrowLeftIcon />
+        <span>Library</span>
+      </button>
+      <ActiveBookNavigation
+        book={props.book}
+        chapters={props.chapters}
+        activeChapterId={props.activeChapterId}
+        onOpenChapter={props.onOpenChapter}
+      />
+    </section>
+  );
+}
+
+interface ActiveBookNavigationProps {
+  book: ActiveRailBook;
+  chapters: ReaderChapterNavigationItem[];
+  activeChapterId: string;
+  onOpenChapter: (chapterId: string) => void;
+}
+
+function ActiveBookNavigation(props: ActiveBookNavigationProps) {
+  return (
+    <section class="active-book-navigation" aria-label={`${props.book.title} chapters`}>
+      <div class="active-book-card">
+        <BookCover
+          className="sidebar-book-cover"
+          title={props.book.title}
+          src={props.book.coverImageSrc}
+        />
+        <div class="active-book-meta">
+          <strong>{props.book.title}</strong>
+          <span>{props.book.author || "Unknown author"}</span>
+        </div>
+      </div>
+
+      <div class="sidebar-chapter-list" role="list">
+        <For each={props.chapters}>
+          {(chapter) => (
+            <button
+              classList={{
+                "sidebar-chapter-row": true,
+                active: props.activeChapterId === chapter.id
+              }}
+              type="button"
+              onClick={() => props.onOpenChapter(chapter.id)}
+            >
+              <span>{chapter.title}</span>
+              <small>
+                {chapter.sentenceCount} sentence{chapter.sentenceCount === 1 ? "" : "s"}
+              </small>
+            </button>
+          )}
+        </For>
+      </div>
+    </section>
+  );
+}
+
+interface LibraryWorkspaceProps {
+  books: LibraryBookSummary[];
+  totalBookCount: number;
+  bookListState: LibraryBookListState;
+  query: string;
+  filter: LibraryBookFilter;
+  importing: boolean;
+  notice: string | null;
+  onQueryChange: (query: string) => void;
+  onFilterChange: (filter: LibraryBookFilter) => void;
+  onImport: () => void;
+  onOpenBook: (bookId: string) => void;
+  onRetryLibrary: () => void;
+  onOpenSample: () => void;
+}
+
+export function LibraryWorkspace(props: LibraryWorkspaceProps) {
+  const hasNoBooks = () => props.totalBookCount === 0 && props.bookListState !== "loading";
+
+  return (
+    <section class="library-workspace" aria-label="Library workspace">
+      <header class="library-topbar">
+        <h1>Library</h1>
+        <div class="top-app-actions">
+          <button type="button" aria-label="Listen">
+            <HeadphonesIcon />
+          </button>
+          <button type="button" aria-label="More actions">
+            <MoreIcon />
+          </button>
+          <span class="user-chip" aria-hidden="true">
+            R
+          </span>
+        </div>
+      </header>
+
+      <Show
+        when={!hasNoBooks()}
+        fallback={
+          <EmptyLibraryState
+            importing={props.importing}
+            notice={props.notice}
+            onImport={props.onImport}
+            onOpenSample={props.onOpenSample}
+            onRetryLibrary={props.onRetryLibrary}
+          />
+        }
+      >
+        <section class="library-collection" aria-label="Book collection">
+          <div class="library-collection-header">
+            <div>
+              <p>All Books</p>
+              <h2>Your Collection</h2>
+              <span>Manage your digital shelves and reading progress.</span>
+            </div>
+            <label class="library-search">
+              <SearchIcon />
+              <input
+                aria-label="Search library"
+                type="search"
+                value={props.query}
+                placeholder="Search library..."
+                onInput={(event) => props.onQueryChange(event.currentTarget.value)}
+              />
+            </label>
+          </div>
+
+          <div class="library-filter-row" aria-label="Library filters">
+            <button
+              classList={{ active: props.filter === "all" }}
+              type="button"
+              onClick={() => props.onFilterChange("all")}
+            >
+              Recent
+            </button>
+            <button
+              classList={{ active: props.filter === "in-progress" }}
+              type="button"
+              onClick={() => props.onFilterChange("in-progress")}
+            >
+              In progress
+            </button>
+            <button type="button" onClick={() => props.onFilterChange("all")}>
+              Unread
+            </button>
+            <button
+              classList={{ active: props.filter === "bookmarked" }}
+              type="button"
+              onClick={() => props.onFilterChange("bookmarked")}
+            >
+              Bookmarked
+            </button>
+            <span class="library-view-icons" aria-hidden="true">
+              <SlidersIcon />
+              <LibraryIcon />
+            </span>
+          </div>
+
+          <Show when={props.notice}>
+            {(notice) => <StateNotice message={notice()} onRetry={props.onRetryLibrary} compact />}
+          </Show>
+
+          <Show
+            when={props.bookListState !== "loading"}
+            fallback={
+              <StateBlock title="Opening library" body="Your saved books will appear here." />
+            }
+          >
+            <div class="library-grid" role="list">
+              <For each={props.books}>
+                {(book) => (
+                  <button
+                    class="library-book-card"
+                    type="button"
+                    onClick={() => props.onOpenBook(book.id)}
+                  >
+                    <BookCover
+                      className="library-book-cover"
+                      title={book.title}
+                      src={book.coverImageSrc}
+                    />
+                    <strong>{book.title}</strong>
+                    <small>{book.author}</small>
+                    <div class="library-card-progress" aria-hidden="true">
+                      <span style={{ width: `${libraryProgressPercent(book)}%` }} />
+                    </div>
+                    <em>{libraryProgressPercent(book)}%</em>
+                  </button>
+                )}
+              </For>
+              <button
+                class="library-drop-card"
+                type="button"
+                disabled={props.importing}
+                onClick={props.onImport}
+              >
+                <PlusIcon />
+                <strong>{props.importing ? "Adding EPUB" : "Drop New EPUB"}</strong>
+              </button>
+            </div>
+          </Show>
+        </section>
+      </Show>
+    </section>
+  );
+}
+
+interface EmptyLibraryStateProps {
+  importing: boolean;
+  notice: string | null;
+  onImport: () => void;
+  onOpenSample: () => void;
+  onRetryLibrary: () => void;
+}
+
+function EmptyLibraryState(props: EmptyLibraryStateProps) {
+  return (
+    <section class="empty-library-state" aria-label="Empty library">
+      <div class="empty-drop-illustration" aria-hidden="true">
+        <span>
+          <PlusIcon />
+          Drop file here
+        </span>
+      </div>
+      <h2>Your library is empty.</h2>
+      <p>
+        Import your first EPUB to start reading. Readex supports rich formatting, deep annotations,
+        and seamless narration.
+      </p>
+      <button
+        class="empty-import-button"
+        type="button"
+        disabled={props.importing}
+        onClick={props.onImport}
+      >
+        <PlusIcon />
+        {props.importing ? "Importing EPUB" : "Import EPUB"}
+      </button>
+      <div class="sample-collection-row">
+        <span>Or browse our sample collection</span>
+        <button type="button" onClick={props.onOpenSample}>
+          Classic Literature
+        </button>
+        <button type="button" onClick={props.onOpenSample}>
+          Research Papers
+        </button>
+      </div>
+      <Show when={props.notice}>
+        {(notice) => <StateNotice message={notice()} onRetry={props.onRetryLibrary} compact />}
+      </Show>
+    </section>
+  );
+}
+
+interface LibrarySearchStateProps {
+  searching: boolean;
+  results: LibrarySearchResultDto[];
+  onOpenSearchResult: (result: LibrarySearchResultDto) => void;
+}
+
+function LibrarySearchState(props: LibrarySearchStateProps) {
+  return (
+    <div class="library-search-results" role="list" aria-busy={props.searching}>
+      <Show
+        when={!props.searching}
+        fallback={<StateBlock title="Searching library" body="Looking through saved books." />}
+      >
+        <Show
+          when={props.results.length > 0}
+          fallback={
+            <StateBlock
+              title="No library matches"
+              body="Try a different title, author, or sentence."
+            />
+          }
+        >
+          <For each={props.results}>
+            {(result) => (
+              <button type="button" onClick={() => props.onOpenSearchResult(result)}>
+                <span>{result.kind === "book" ? result.bookTitle : result.excerpt}</span>
+                <small>
+                  {result.kind === "book"
+                    ? result.author
+                    : `${result.bookTitle} · ${result.chapterTitle ?? "Chapter"}`}
+                </small>
+              </button>
+            )}
+          </For>
+        </Show>
+      </Show>
+    </div>
+  );
+}
+
+interface BookListStateProps {
+  state: LibraryBookListState;
+  hasLibraryBooks: boolean;
+  importing: boolean;
+  onImport: () => void;
+}
+
+function BookListState(props: BookListStateProps) {
+  if (props.state === "ready") return null;
+
+  if (props.state === "loading") {
+    return <StateBlock title="Opening library" body="Your saved books will appear here." />;
+  }
+
+  if (!props.hasLibraryBooks) {
+    return (
+      <StateBlock
+        title="No imported books"
+        body="The sample stays available until a book is added."
+        actionLabel={props.importing ? "Adding book..." : "Add EPUB"}
+        actionDisabled={props.importing}
+        onAction={props.onImport}
+      />
+    );
+  }
+
+  return <StateBlock title="No books in this view" body="Try All books or clear the search." />;
+}

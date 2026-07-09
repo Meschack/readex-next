@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   advancePlayback,
   calculateReaderProgress,
+  calculateReaderProgressFromIndex,
   calculateSentenceRenderWindow,
+  createReaderProgressIndex,
   createReadingPositionScheduler,
   createPlaybackState,
   createReaderPreferences,
@@ -99,6 +101,19 @@ describe("reader progress", () => {
       bookPercent: 0
     });
   });
+
+  it("reuses an indexed progress model for playback updates", () => {
+    const progressIndex = createReaderProgressIndex([
+      { id: "chapter-2", index: 1, sentenceCount: 3 },
+      { id: "chapter-1", index: 0, sentenceCount: 2 }
+    ]);
+
+    expect(calculateReaderProgressFromIndex(progressIndex, "chapter-2", 2)).toMatchObject({
+      chapterSentenceNumber: 3,
+      bookSentenceNumber: 5,
+      bookSentenceCount: 5
+    });
+  });
 });
 
 describe("reader search", () => {
@@ -119,6 +134,18 @@ describe("reader search", () => {
   it("reports whether a sentence matches a query", () => {
     expect(sentenceMatchesQuery(sentences[0], "listens")).toBe(true);
     expect(sentenceMatchesQuery(sentences[0], "")).toBe(false);
+  });
+
+  it("uses precomputed search text when available", () => {
+    const sentence = {
+      id: "sentence-3",
+      index: 2,
+      text: "Display text",
+      searchText: "hidden searchable text"
+    };
+
+    expect(sentenceMatchesQuery(sentence, "searchable")).toBe(true);
+    expect(searchReaderSentences([sentence], "display")).toEqual([]);
   });
 });
 

@@ -8,6 +8,11 @@ describe("fixture reader view", () => {
 
     expect(reader.sentences).toHaveLength(5);
     expect(reader.sentences[0]?.id).toBe("fixture-book-mara:chapter-1:sentence-1");
+    expect(reader.sentences[0]?.searchText).toContain("rain softened");
+    expect(reader.paragraphs[0]).toMatchObject({
+      startSentenceIndex: 0,
+      endSentenceIndex: 3
+    });
     expect(
       tokenizeReaderText(reader.sentences[0]?.text ?? "").some((token) => token.kind === "word")
     ).toBe(true);
@@ -184,5 +189,9 @@ describe("fixture reader view", () => {
     expect(reader.sentences.map((sentence) => sentence.text)).toEqual(["Second.", "Third."]);
     expect(reader.chapters.map((chapter) => chapter.sentenceCount)).toEqual([50, 2]);
     expect(reader.totalSentenceCount).toBe(52);
+    expect(reader.paragraphs[0]).toMatchObject({
+      startSentenceIndex: 0,
+      endSentenceIndex: 2
+    });
   });
 });

@@ -27,6 +27,7 @@ export interface SearchableSentence {
   id: string;
   index: number;
   text: string;
+  searchText?: string;
 }
 
 export interface ReaderSearchResult<TSentence extends SearchableSentence = SearchableSentence> {
@@ -49,6 +50,13 @@ export interface ReaderProgress {
   bookSentenceNumber: number;
   bookSentenceCount: number;
   bookPercent: number;
+}
+
+export interface ReaderProgressIndex {
+  chapters: ReaderProgressChapter[];
+  chapterCount: number;
+  bookSentenceCount: number;
+  sentencesBeforeChapter: Record<string, number>;
 }
 
 export interface SentenceRenderWindow {
@@ -207,11 +215,11 @@ export function searchReaderSentences<TSentence extends SearchableSentence>(
   sentences: TSentence[],
   query: string
 ): ReaderSearchResult<TSentence>[] {
-  const normalizedQuery = normalizeReaderSearchQuery(query);
+  const normalizedQuery = normalizeReaderSearchText(query);
   if (normalizedQuery.length === 0) return [];
 
   return sentences
-    .filter((sentence) => normalizeReaderSearchQuery(sentence.text).includes(normalizedQuery))
+    .filter((sentence) => searchableSentenceText(sentence).includes(normalizedQuery))
     .map((sentence) => ({
       sentence,
       excerpt: createSearchExcerpt(sentence.text, normalizedQuery)
@@ -219,11 +227,8 @@ export function searchReaderSentences<TSentence extends SearchableSentence>(
 }
 
 export function sentenceMatchesQuery(sentence: SearchableSentence, query: string): boolean {
-  const normalizedQuery = normalizeReaderSearchQuery(query);
-  return (
-    normalizedQuery.length > 0 &&
-    normalizeReaderSearchQuery(sentence.text).includes(normalizedQuery)
-  );
+  const normalizedQuery = normalizeReaderSearchText(query);
+  return normalizedQuery.length > 0 && searchableSentenceText(sentence).includes(normalizedQuery);
 }
 
 export function createSentenceId(bookId: string, chapterId: string, sentenceIndex: number): string {
@@ -235,14 +240,40 @@ export function calculateReaderProgress(
   activeChapterId: string,
   activeSentenceIndex: number
 ): ReaderProgress {
+  return calculateReaderProgressFromIndex(
+    createReaderProgressIndex(chapters),
+    activeChapterId,
+    activeSentenceIndex
+  );
+}
+
+export function createReaderProgressIndex(chapters: ReaderProgressChapter[]): ReaderProgressIndex {
   const orderedChapters = [...chapters].sort((first, second) => first.index - second.index);
+  let bookSentenceCount = 0;
+  const sentencesBeforeChapter: Record<string, number> = {};
+
+  for (const chapter of orderedChapters) {
+    sentencesBeforeChapter[chapter.id] = bookSentenceCount;
+    bookSentenceCount += Math.max(0, chapter.sentenceCount);
+  }
+
+  return {
+    chapters: orderedChapters,
+    chapterCount: orderedChapters.length,
+    bookSentenceCount,
+    sentencesBeforeChapter
+  };
+}
+
+export function calculateReaderProgressFromIndex(
+  index: ReaderProgressIndex,
+  activeChapterId: string,
+  activeSentenceIndex: number
+): ReaderProgress {
+  const orderedChapters = index.chapters;
   const activeChapter =
     orderedChapters.find((chapter) => chapter.id === activeChapterId) ?? orderedChapters[0];
-  const chapterCount = orderedChapters.length;
-  const bookSentenceCount = orderedChapters.reduce(
-    (total, chapter) => total + Math.max(0, chapter.sentenceCount),
-    0
-  );
+  const { bookSentenceCount, chapterCount } = index;
 
   if (activeChapter == null) {
     return {
@@ -260,9 +291,7 @@ export function calculateReaderProgress(
   const chapterSentenceCount = Math.max(0, activeChapter.sentenceCount);
   const safeSentenceIndex =
     chapterSentenceCount === 0 ? 0 : clampSentenceIndex(activeSentenceIndex, chapterSentenceCount);
-  const sentencesBeforeChapter = orderedChapters
-    .filter((chapter) => chapter.index < activeChapter.index)
-    .reduce((total, chapter) => total + Math.max(0, chapter.sentenceCount), 0);
+  const sentencesBeforeChapter = index.sentencesBeforeChapter[activeChapter.id] ?? 0;
   const bookSentenceIndex =
     bookSentenceCount === 0
       ? 0
@@ -348,8 +377,12 @@ export function createReadingPositionScheduler<TPosition>(
   };
 }
 
-function normalizeReaderSearchQuery(query: string): string {
+export function normalizeReaderSearchText(query: string): string {
   return query.normalize("NFKC").trim().toLocaleLowerCase().replace(/\s+/g, " ");
+}
+
+function searchableSentenceText(sentence: SearchableSentence): string {
+  return sentence.searchText ?? normalizeReaderSearchText(sentence.text);
 }
 
 function isReaderToolTab(value: unknown): value is ReaderToolTab {
@@ -366,7 +399,7 @@ function clampContentFontSize(value: number): number {
 }
 
 function createSearchExcerpt(text: string, normalizedQuery: string): string {
-  const normalizedText = normalizeReaderSearchQuery(text);
+  const normalizedText = normalizeReaderSearchText(text);
   const matchIndex = normalizedText.indexOf(normalizedQuery);
   if (matchIndex === -1 || text.length <= 120) return text;
 

@@ -9,7 +9,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::{
     epub_import::ImportedBook,
-    text::{normalize_reader_paragraphs, segment_paragraphs, segment_sentences},
+    text::{normalize_reader_paragraphs, segment_normalized_paragraphs, segment_paragraphs},
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -69,6 +69,13 @@ pub struct ReaderSentenceView {
     pub id: String,
     pub index: i64,
     pub text: String,
+}
+
+struct ParagraphRange {
+    id: String,
+    index: i64,
+    start_sentence_index: i64,
+    sentence_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -201,41 +208,94 @@ impl ReadexStore {
             )
             .map_err(|_| "We couldn't save that book.".to_string())?;
         transaction
+            .execute(
+                "DELETE FROM paragraphs WHERE book_id = ?1",
+                params![book.id],
+            )
+            .map_err(|_| "We couldn't refresh that book.".to_string())?;
+        transaction
             .execute("DELETE FROM sentences WHERE book_id = ?1", params![book.id])
             .map_err(|_| "We couldn't refresh that book.".to_string())?;
         transaction
             .execute("DELETE FROM chapters WHERE book_id = ?1", params![book.id])
             .map_err(|_| "We couldn't refresh that book.".to_string())?;
 
-        for chapter in &book.chapters {
-            transaction
-                .execute(
+        {
+            let mut insert_chapter = transaction
+                .prepare(
                     "INSERT INTO chapters (id, book_id, title, position, body)
                      VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![
+                )
+                .map_err(|_| "We couldn't save a chapter from that book.".to_string())?;
+            let mut insert_sentence = transaction
+                .prepare(
+                    "INSERT INTO sentences (id, book_id, chapter_id, position, text)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                )
+                .map_err(|_| "We couldn't save a sentence from that book.".to_string())?;
+            let mut insert_paragraph = transaction
+                .prepare(
+                    "INSERT INTO paragraphs (
+                        id,
+                        book_id,
+                        chapter_id,
+                        position,
+                        start_sentence_index,
+                        sentence_count
+                     )
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                )
+                .map_err(|_| "We couldn't save a paragraph from that book.".to_string())?;
+
+            for chapter in &book.chapters {
+                let normalized_body = normalize_reader_paragraphs(&chapter.body);
+                let paragraph_sentences = segment_normalized_paragraphs(&normalized_body);
+
+                insert_chapter
+                    .execute(params![
                         chapter.id,
                         book.id,
                         chapter.title,
                         chapter.index as i64,
-                        normalize_reader_paragraphs(&chapter.body)
-                    ],
-                )
-                .map_err(|_| "We couldn't save a chapter from that book.".to_string())?;
+                        normalized_body
+                    ])
+                    .map_err(|_| "We couldn't save a chapter from that book.".to_string())?;
 
-            for (sentence_index, sentence) in segment_sentences(&chapter.body).iter().enumerate() {
-                transaction
-                    .execute(
-                        "INSERT INTO sentences (id, book_id, chapter_id, position, text)
-                         VALUES (?1, ?2, ?3, ?4, ?5)",
-                        params![
-                            format!("{}:sentence-{}", chapter.id, sentence_index + 1),
-                            book.id,
-                            chapter.id,
-                            sentence_index as i64,
-                            sentence
-                        ],
-                    )
-                    .map_err(|_| "We couldn't save a sentence from that book.".to_string())?;
+                let mut sentence_index = 0_i64;
+                for (paragraph_index, sentences) in paragraph_sentences.iter().enumerate() {
+                    let paragraph_start = sentence_index;
+
+                    for sentence in sentences {
+                        insert_sentence
+                            .execute(params![
+                                format!("{}:sentence-{}", chapter.id, sentence_index + 1),
+                                book.id,
+                                chapter.id,
+                                sentence_index,
+                                sentence
+                            ])
+                            .map_err(|_| {
+                                "We couldn't save a sentence from that book.".to_string()
+                            })?;
+                        sentence_index += 1;
+                    }
+
+                    let sentence_count = sentence_index - paragraph_start;
+                    if sentence_count > 0 {
+                        insert_paragraph
+                            .execute(params![
+                                format!("{}:paragraph-{}", chapter.id, paragraph_index + 1),
+                                book.id,
+                                chapter.id,
+                                paragraph_index as i64,
+                                paragraph_start,
+                                sentence_count
+                            ])
+                            .map_err(|_| {
+                                "We couldn't save a paragraph from that book.".to_string()
+                            })?;
+                    }
+                }
             }
         }
 
@@ -337,7 +397,8 @@ impl ReadexStore {
 
         if let Some(chapter_id) = active_chapter_id.as_deref() {
             let sentences = self.read_sentences_for_chapter(&connection, chapter_id)?;
-            let paragraphs = self.read_paragraphs_for_chapter(&connection, chapter_id)?;
+            let paragraphs =
+                self.read_paragraphs_for_chapter(&connection, chapter_id, &sentences)?;
             if let Some(chapter) = chapters.iter_mut().find(|entry| entry.id == chapter_id) {
                 chapter.sentences = sentences;
                 chapter.paragraphs = paragraphs;
@@ -638,6 +699,15 @@ impl ReadexStore {
                     text TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS paragraphs (
+                    id TEXT PRIMARY KEY,
+                    book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+                    chapter_id TEXT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+                    position INTEGER NOT NULL,
+                    start_sentence_index INTEGER NOT NULL,
+                    sentence_count INTEGER NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS reading_positions (
                     book_id TEXT PRIMARY KEY REFERENCES books(id) ON DELETE CASCADE,
                     chapter_id TEXT NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
@@ -670,6 +740,8 @@ impl ReadexStore {
                     ON sentences(chapter_id, position);
                 CREATE INDEX IF NOT EXISTS idx_sentences_book_chapter_position
                     ON sentences(book_id, chapter_id, position);
+                CREATE INDEX IF NOT EXISTS idx_paragraphs_chapter_position
+                    ON paragraphs(chapter_id, position);
                 CREATE INDEX IF NOT EXISTS idx_bookmarks_book_created
                     ON bookmarks(book_id, created_at);
                 ",
@@ -784,7 +856,8 @@ impl ReadexStore {
         }
 
         for chapter in &mut chapters {
-            chapter.paragraphs = self.read_paragraphs_for_chapter(connection, &chapter.id)?;
+            chapter.paragraphs =
+                self.read_paragraphs_for_chapter(connection, &chapter.id, &chapter.sentences)?;
         }
 
         Ok(chapters)
@@ -819,6 +892,89 @@ impl ReadexStore {
     }
 
     fn read_paragraphs_for_chapter(
+        &self,
+        connection: &Connection,
+        chapter_id: &str,
+        sentences: &[ReaderSentenceView],
+    ) -> Result<Vec<ReaderParagraphView>, String> {
+        let persisted =
+            self.read_persisted_paragraphs_for_chapter(connection, chapter_id, sentences)?;
+        if !persisted.is_empty() {
+            return Ok(persisted);
+        }
+
+        self.read_paragraphs_from_chapter_body(connection, chapter_id)
+    }
+
+    fn read_persisted_paragraphs_for_chapter(
+        &self,
+        connection: &Connection,
+        chapter_id: &str,
+        sentences: &[ReaderSentenceView],
+    ) -> Result<Vec<ReaderParagraphView>, String> {
+        let mut statement = connection
+            .prepare(
+                "SELECT id, position, start_sentence_index, sentence_count
+                 FROM paragraphs
+                 WHERE chapter_id = ?1
+                 ORDER BY position ASC",
+            )
+            .map_err(|_| "We couldn't read that chapter.".to_string())?;
+        let ranges = statement
+            .query_map(params![chapter_id], |row| {
+                Ok(ParagraphRange {
+                    id: row.get(0)?,
+                    index: row.get(1)?,
+                    start_sentence_index: row.get(2)?,
+                    sentence_count: row.get(3)?,
+                })
+            })
+            .map_err(|_| "We couldn't read that chapter.".to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| "We couldn't read that chapter.".to_string())?;
+
+        if ranges.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut sentence_by_index = None;
+        let mut paragraphs = Vec::new();
+
+        for range in ranges {
+            let paragraph_sentences = sentence_slice_for_range(
+                sentences,
+                range.start_sentence_index,
+                range.sentence_count,
+            )
+            .unwrap_or_else(|| {
+                let index = sentence_by_index.get_or_insert_with(|| {
+                    sentences
+                        .iter()
+                        .map(|sentence| (sentence.index, sentence))
+                        .collect::<HashMap<_, _>>()
+                });
+
+                (range.start_sentence_index..range.start_sentence_index + range.sentence_count)
+                    .filter_map(|sentence_index| index.get(&sentence_index))
+                    .map(|sentence| (*sentence).clone())
+                    .collect::<Vec<_>>()
+            });
+
+            if paragraph_sentences.is_empty() {
+                continue;
+            }
+
+            paragraphs.push(ReaderParagraphView {
+                id: range.id,
+                index: range.index,
+                sentences: paragraph_sentences,
+            });
+        }
+
+        Ok(paragraphs)
+    }
+
+    fn read_paragraphs_from_chapter_body(
         &self,
         connection: &Connection,
         chapter_id: &str,
@@ -1090,6 +1246,28 @@ fn read_bookmark_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BookmarkView> 
     })
 }
 
+fn sentence_slice_for_range(
+    sentences: &[ReaderSentenceView],
+    start_sentence_index: i64,
+    sentence_count: i64,
+) -> Option<Vec<ReaderSentenceView>> {
+    if start_sentence_index < 0 || sentence_count <= 0 {
+        return None;
+    }
+
+    let start = usize::try_from(start_sentence_index).ok()?;
+    let count = usize::try_from(sentence_count).ok()?;
+    let end = start.checked_add(count)?;
+    let slice = sentences.get(start..end)?;
+    let expected_end_index = start_sentence_index + sentence_count - 1;
+
+    if slice.first()?.index != start_sentence_index || slice.last()?.index != expected_end_index {
+        return None;
+    }
+
+    Some(slice.to_vec())
+}
+
 fn resolve_active_chapter_id(
     chapters: &[ReaderChapterView],
     requested_chapter_id: Option<&str>,
@@ -1159,7 +1337,7 @@ mod tests {
         SaveBookmarkRequest, SaveReadingPositionRequest,
     };
     use crate::epub_import::{import_epub_file, ImportedBook, ImportedChapter};
-    use rusqlite::Connection;
+    use rusqlite::{params, Connection};
 
     #[test]
     fn saves_books_and_restores_reading_position() {
@@ -1376,6 +1554,52 @@ mod tests {
         );
         assert!(restored.chapters[0].sentences.is_empty());
         assert_eq!(restored.chapters[1].sentences.len(), 1);
+
+        fs::remove_dir_all(temp_dir).ok();
+    }
+
+    #[test]
+    fn persists_paragraph_ranges_for_fast_chapter_opening() {
+        let temp_dir = temp_store_dir();
+        fs::create_dir_all(&temp_dir).expect("test store dir should be created");
+        let store =
+            ReadexStore::open_at(temp_dir.join("readex.sqlite3")).expect("store should initialize");
+
+        let document = store
+            .save_imported_book(ImportedBook {
+                id: "book-paragraphs".to_string(),
+                title: "Paragraph Book".to_string(),
+                author: "Test Author".to_string(),
+                cover_image_src: None,
+                source_path: "/tmp/paragraphs.epub".to_string(),
+                chapters: vec![ImportedChapter {
+                    id: "book-paragraphs:chapter-1".to_string(),
+                    title: "Chapter One".to_string(),
+                    index: 0,
+                    body: "First sentence. Second sentence.\n\nThird sentence.".to_string(),
+                }],
+            })
+            .expect("book should save");
+        let connection = store.connect().expect("store should connect");
+        let paragraph_count = connection
+            .query_row(
+                "SELECT COUNT(*) FROM paragraphs WHERE chapter_id = ?1",
+                params!["book-paragraphs:chapter-1"],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("paragraph count should read");
+        let reopened = store
+            .open_book("book-paragraphs", None)
+            .expect("book should reopen");
+
+        assert_eq!(paragraph_count, 2);
+        assert_eq!(document.chapters[0].paragraphs.len(), 2);
+        assert_eq!(reopened.chapters[0].paragraphs.len(), 2);
+        assert_eq!(reopened.chapters[0].paragraphs[0].sentences.len(), 2);
+        assert_eq!(
+            reopened.chapters[0].paragraphs[1].sentences[0].text,
+            "Third sentence."
+        );
 
         fs::remove_dir_all(temp_dir).ok();
     }
