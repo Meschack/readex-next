@@ -2,13 +2,17 @@ name: Release
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
+  workflow_run:
+    workflows:
+      - CI
+    branches:
+      - main
+    types:
+      - completed
 
 concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
+  group: release-${{ github.event.workflow_run.head_branch || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -17,6 +21,7 @@ jobs:
   build:
     name: Build ${{ matrix.label }}
     runs-on: ${{ matrix.platform }}
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
 
     strategy:
       fail-fast: false
@@ -38,6 +43,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Fetch release tags
+        run: git fetch --force --tags
 
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'
@@ -49,7 +60,8 @@ jobs:
             librsvg2-dev \
             patchelf \
             pkg-config \
-            xdg-utils
+            xdg-utils \
+            libfuse2
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -74,15 +86,24 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Prepare release version
+        id: version
+        run: node scripts/prepare-release-version.mjs
+
       - name: Build and upload bundles
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: "-"
         with:
           projectPath: apps/desktop
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
-          releaseName: Readex Next v__VERSION__
-          releaseBody: Cross-platform Readex Next desktop bundles.
-          releaseDraft: true
+          tagName: ${{ steps.version.outputs.tag }}
+          releaseName: ${{ steps.version.outputs.release_name }}
+          releaseBody: |
+            Automated Readex Next desktop release from ${{ github.event.workflow_run.head_sha || github.sha }}.
+
+            Assets include platform bundles for Linux, macOS, and Windows.
+            macOS builds use ad-hoc signing until a Developer ID certificate is configured.
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

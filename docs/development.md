@@ -33,6 +33,7 @@ pnpm dev:stop
 pnpm typecheck
 pnpm test
 pnpm build
+pnpm build:desktop
 pnpm check
 pnpm check:native
 pnpm qa:real-books
@@ -159,3 +160,16 @@ Advanced overrides:
 - `READEX_PIPER_VOICES`: comma, semicolon, or space separated list of voices to install through `pnpm setup:piper`
 
 If no neural local voice is available, Readex shows a friendly needs-attention state instead of playing robotic system speech.
+
+## CI and Releases
+
+GitHub Actions runs two workflows:
+
+- `CI`: verifies formatting, TypeScript, tests, frontend build, native Rust checks, and a Linux desktop bundle.
+- `Release`: runs after a successful `main` CI build and publishes GitHub Releases for Linux, macOS, and Windows.
+
+The release workflow uses `scripts/prepare-release-version.mjs` to compute the next patch version from existing `v*` tags. The computed version is applied to the package, Tauri, and Cargo manifests inside the workflow workspace before `tauri-apps/tauri-action` builds release bundles.
+
+Release versions are not committed back to `main`; the immutable GitHub tag and release represent the shipped build. To intentionally move to a new base version, update the manifest versions in source and let the next release start from that value.
+
+Manual release runs are available from the GitHub Actions `Release` workflow.

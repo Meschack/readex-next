@@ -6,3 +6,4 @@ apps/desktop/src-tauri/gen/
 apps/desktop/src-tauri/target/
 pnpm-lock.yaml
 Cargo.lock
+LICENSE
