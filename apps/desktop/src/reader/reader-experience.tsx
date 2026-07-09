@@ -922,6 +922,7 @@ export function ReaderExperience() {
     const importOutcome = existingBookIds.has(nextReader.book.id) ? "reopened" : "added";
     activateReader(nextReader);
     setActiveView("reader");
+    sendLibraryRailEvent({ type: "reader-opened", bookId: nextReader.book.id });
     setLibraryNotice(libraryImportNotice(importOutcome));
     setLibraryBooks(await repository.listBooks());
     await refreshBookmarks(nextReader.book.id);
