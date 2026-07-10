@@ -18,10 +18,16 @@ Core event examples:
 - `PlaybackPositionChanged`
 - `WordInspected`
 - `BookmarkCreated`
+- `BookmarkDeleted`
 - `BookExportRequested`
 - `BookExported`
 
 Events are domain language. They should not mention worker internals, chunk implementation, or transport details.
+
+The canonical payload map, event factory, and dispatcher live in `@sonelle/domain`. Producers
+complete their core operation and dispatch the resulting fact. Registered listeners own follow-up
+reactions. The append-only `EventSink` is one listener used to persist renderer events to SQLite;
+it is not the orchestration mechanism.
 
 ## Module Map
 
@@ -37,6 +43,8 @@ Initial modules:
 - `storage`: persistence adapters and migrations
 - `platform`: desktop/mobile filesystem, dialogs, subprocesses
 - `ui`: renderer components and routes
+
+Current ownership notes for substantial modules live in [`docs/modules`](modules/README.md).
 
 ## Deep Module Standard
 

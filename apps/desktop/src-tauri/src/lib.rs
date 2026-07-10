@@ -36,6 +36,7 @@ pub fn run() {
             commands::list_books,
             commands::open_book,
             commands::prepare_sentence_audio,
+            commands::record_domain_event,
             commands::report_development_error,
             commands::play_sentence_audio,
             commands::save_bookmark,

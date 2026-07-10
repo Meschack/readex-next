@@ -1,4 +1,4 @@
-import type { SentenceRef } from "@sonelle/domain";
+import { normalizeLanguageCode, type SentenceRef } from "@sonelle/domain";
 import narrationVoiceConfig from "./narration-voices.json";
 
 export type AudioReadiness = "ready" | "preparing" | "needs-attention" | "unavailable";
@@ -26,6 +26,7 @@ export interface NarrationVoice {
   id: string;
   label: string;
   locale: string;
+  description: string;
 }
 
 export interface AudioSettings {
@@ -210,27 +211,6 @@ function clampPlaybackRate(rate: number): number {
 function normalizeNarrationVoiceId(voiceId: string | undefined): string {
   if (voiceId != null && isSupportedNarrationVoiceId(voiceId)) return voiceId;
   return DEFAULT_AUDIO_SETTINGS.voiceId;
-}
-
-function normalizeLanguageCode(language: string | null | undefined): string | null {
-  if (language == null) return null;
-  const code = language.trim().toLocaleLowerCase().split(/[-_]/u)[0];
-  if (code.length === 0) return null;
-
-  return (
-    (
-      {
-        eng: "en",
-        fre: "fr",
-        fra: "fr",
-        deu: "de",
-        ger: "de",
-        spa: "es",
-        ita: "it",
-        por: "pt"
-      } as Record<string, string>
-    )[code] ?? code
-  );
 }
 
 function normalizeLocale(language: string | null | undefined): string | null {

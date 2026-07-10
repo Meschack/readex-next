@@ -443,15 +443,6 @@ function SettingsPanel(props: SettingsPanelProps) {
   );
 }
 
-function voiceDescription(voiceId: string) {
-  if (voiceId.includes("en_US")) return "Soft, narrative American accent";
-  if (voiceId.includes("northern")) return "Warm northern British accent";
-  if (voiceId.includes("en_GB")) return "Deep, scholarly British accent";
-  if (voiceId.includes("fr_FR")) return "Natural French narration";
-
-  return "Clear, natural narration";
-}
-
 interface EnhancedSelectOption {
   id: string;
   label: string;
@@ -507,7 +498,7 @@ function VoiceSelect(props: { voiceId: string; onChange: (voiceId: string) => vo
     SUPPORTED_NARRATION_VOICES.map((voice) => ({
       id: voice.id,
       label: voice.label,
-      description: voiceDescription(voice.id),
+      description: voice.description,
       meta: voice.locale
     }));
 

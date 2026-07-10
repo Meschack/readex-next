@@ -29,6 +29,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
+            gstreamer1.0-plugins-bad \
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
@@ -46,7 +47,9 @@ jobs:
           corepack prepare pnpm@11.7.0 --activate
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt
 
       - name: Cache Rust builds
         uses: swatinem/rust-cache@v2
@@ -68,8 +71,33 @@ jobs:
       - name: Build frontend
         run: pnpm build
 
+      - name: Check Rust formatting
+        run: cargo fmt --check
+
       - name: Check native shell
         run: cargo check --workspace --locked
+
+  marketing:
+    name: Verify product film
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+
+      - name: Install dependencies
+        run: npm ci --prefix marketing/sonelle-promo-video
+
+      - name: Lint product film
+        run: npm --prefix marketing/sonelle-promo-video run lint
+
+      - name: Build product film
+        run: npm --prefix marketing/sonelle-promo-video run build
 
   bundle-linux:
     name: Build Linux desktop bundle
@@ -85,6 +113,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
+            gstreamer1.0-plugins-bad \
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
@@ -103,7 +132,7 @@ jobs:
           corepack prepare pnpm@11.7.0 --activate
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.95.0
 
       - name: Cache Rust builds
         uses: swatinem/rust-cache@v2

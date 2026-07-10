@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 
-const DEFAULT_PIPER_VOICE: &str = "en_US-lessac-medium";
+const NARRATION_VOICE_CONFIG: &str =
+    include_str!("../../../../packages/audio/src/narration-voices.json");
 const MISSING_NEURAL_VOICE_MESSAGE: &str = "Install a natural local voice to listen offline.";
 const NARRATION_CACHE_VERSION: &str = "piper-v2";
 const CACHE_STATS_FILE: &str = "cache-stats.json";
@@ -43,6 +44,13 @@ for line in sys.stdin:
 static PIPER_RUNTIMES: OnceLock<Mutex<HashMap<String, PiperRuntime>>> = OnceLock::new();
 static SYNTHESIS_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static CACHE_STATS_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static DEFAULT_PIPER_VOICE: OnceLock<String> = OnceLock::new();
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NarrationVoiceConfig {
+    default_voice_id: String,
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -485,7 +493,7 @@ impl PiperVoice {
             env::var("SONELLE_PIPER_VOICE")
                 .ok()
                 .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| DEFAULT_PIPER_VOICE.to_string())
+                .unwrap_or_else(default_piper_voice_id)
         } else {
             requested_voice.to_string()
         };
@@ -835,14 +843,20 @@ fn cache_key(request: &SentenceAudioRequest) -> String {
 fn narration_voice_id(request: &SentenceAudioRequest) -> String {
     let voice = request.voice_id.trim();
     if voice.is_empty() {
-        DEFAULT_PIPER_VOICE.to_string()
+        default_piper_voice_id()
     } else {
         voice.to_string()
     }
 }
 
 fn default_piper_voice_id() -> String {
-    DEFAULT_PIPER_VOICE.to_string()
+    DEFAULT_PIPER_VOICE
+        .get_or_init(|| {
+            serde_json::from_str::<NarrationVoiceConfig>(NARRATION_VOICE_CONFIG)
+                .expect("narration voice catalog should be valid JSON")
+                .default_voice_id
+        })
+        .clone()
 }
 
 fn estimate_duration_sec(text: &str) -> f64 {
@@ -892,10 +906,15 @@ mod tests {
     use chrono::Utc;
 
     use super::{
-        piper_model_exists, piper_voice_exists, record_prepared_audio, summarize_audio_cache_at,
-        voice_state_dirs_from, FakeSpeechAdapter, LocalSpeechAdapter, PiperRuntime,
-        SentenceAudioCache, SentenceAudioRequest, SpeechAdapter, DEFAULT_PIPER_VOICE,
+        default_piper_voice_id, piper_model_exists, piper_voice_exists, record_prepared_audio,
+        summarize_audio_cache_at, voice_state_dirs_from, FakeSpeechAdapter, LocalSpeechAdapter,
+        PiperRuntime, SentenceAudioCache, SentenceAudioRequest, SpeechAdapter,
     };
+
+    #[test]
+    fn native_default_voice_comes_from_the_shared_catalog() {
+        assert_eq!(default_piper_voice_id(), "en_US-amy-medium");
+    }
 
     #[test]
     fn fake_adapter_creates_and_reuses_cached_audio() {
@@ -904,7 +923,7 @@ mod tests {
             chapter_id: "chapter".to_string(),
             sentence_id: "sentence".to_string(),
             sentence_index: 0,
-            voice_id: DEFAULT_PIPER_VOICE.to_string(),
+            voice_id: default_piper_voice_id(),
             text: "Hello reader.".to_string(),
         };
         let temp_dir = temp_audio_dir();
@@ -937,7 +956,7 @@ mod tests {
             chapter_id: "chapter".to_string(),
             sentence_id: "sentence".to_string(),
             sentence_index: 0,
-            voice_id: DEFAULT_PIPER_VOICE.to_string(),
+            voice_id: default_piper_voice_id(),
             text: "Hello reader.".to_string(),
         };
         let second_request = SentenceAudioRequest {
@@ -963,7 +982,7 @@ mod tests {
             chapter_id: "chapter".to_string(),
             sentence_id: "piper-sentence".to_string(),
             sentence_index: 0,
-            voice_id: DEFAULT_PIPER_VOICE.to_string(),
+            voice_id: default_piper_voice_id(),
             text: "Sonelle is ready to listen.".to_string(),
         };
         let temp_dir = temp_audio_dir();

@@ -1,7 +1,24 @@
-import type { DomainEvent, DomainEventName } from "@sonelle/domain";
+import type { AnyDomainEvent, DomainEvent, DomainEventName } from "@sonelle/domain";
 
-export interface EventStore {
-  append<TName extends DomainEventName, TPayload>(
-    event: DomainEvent<TName, TPayload>
-  ): Promise<void>;
+export interface EventSink {
+  append<TName extends DomainEventName>(event: DomainEvent<TName>): Promise<void>;
+}
+
+export interface EventJournal extends EventSink {
+  readAll(): Promise<readonly AnyDomainEvent[]>;
+}
+
+export function createMemoryEventJournal(
+  initialEvents: readonly AnyDomainEvent[] = []
+): EventJournal {
+  const events = [...initialEvents];
+
+  return {
+    async append(event) {
+      events.push(event as AnyDomainEvent);
+    },
+    async readAll() {
+      return [...events];
+    }
+  };
 }

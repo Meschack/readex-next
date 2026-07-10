@@ -1,3 +1,5 @@
+import { normalizeLanguageCode } from "@sonelle/domain";
+
 export type DictionaryLookupStatus = "idle" | "loading" | "ready" | "not-found" | "error";
 
 export interface DictionaryDefinition {
@@ -363,12 +365,6 @@ function parseFreeMeaning(item: unknown, partOfSpeech: string): DictionaryMeanin
       }
     ]
   };
-}
-
-function normalizeLanguageCode(value: string | undefined): string | null {
-  if (value == null) return null;
-  const code = value.trim().toLocaleLowerCase().split(/[-_]/u)[0];
-  return code.length > 0 ? code : null;
 }
 
 function readLanguageCode(value: unknown): string | null {

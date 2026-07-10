@@ -4,22 +4,26 @@
     {
       "id": "en_US-amy-medium",
       "label": "American Female",
-      "locale": "en-US"
+      "locale": "en-US",
+      "description": "Soft, narrative American accent"
     },
     {
       "id": "en_GB-alba-medium",
       "label": "English Female",
-      "locale": "en-GB"
+      "locale": "en-GB",
+      "description": "Deep, scholarly British accent"
     },
     {
       "id": "en_GB-northern_english_male-medium",
       "label": "English Male",
-      "locale": "en-GB"
+      "locale": "en-GB",
+      "description": "Warm northern British accent"
     },
     {
       "id": "fr_FR-siwis-medium",
       "label": "Femme française",
-      "locale": "fr-FR"
+      "locale": "fr-FR",
+      "description": "Natural French narration"
     }
   ]
 }

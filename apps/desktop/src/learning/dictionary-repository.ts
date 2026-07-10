@@ -8,6 +8,7 @@ import {
   type DictionaryEntry,
   type SavedDictionary
 } from "@sonelle/learning";
+import { normalizeLanguageCode } from "@sonelle/domain";
 
 const savedDictionaryKey = "sonelle.dictionary.saved.v1";
 const englishDictionaryApiUrl = "https://api.dictionaryapi.dev/api/v2/entries/en";
@@ -25,7 +26,7 @@ export function createDictionaryRepository(): DictionaryRepository {
       const key = normalizeInsightKey(surface);
       if (key.length === 0) return null;
 
-      const languageCode = normalizeDictionaryLanguage(language);
+      const languageCode = normalizeLanguageCode(language) ?? "en";
       const response = await fetch(
         languageCode === "en"
           ? `${englishDictionaryApiUrl}/${encodeURIComponent(key)}`
@@ -75,24 +76,4 @@ async function lookupAcrossLanguages(
   if (!response.ok) throw new Error("Dictionary lookup needs attention.");
 
   return parseFreeDictionaryApiResponse(surface, await response.json());
-}
-
-function normalizeDictionaryLanguage(language: string | null | undefined): string {
-  const code = (language ?? "en").trim().toLocaleLowerCase().split(/[-_]/u)[0];
-  if (code.length === 0) return "en";
-
-  return (
-    (
-      {
-        eng: "en",
-        fre: "fr",
-        fra: "fr",
-        deu: "de",
-        ger: "de",
-        spa: "es",
-        ita: "it",
-        por: "pt"
-      } as Record<string, string>
-    )[code] ?? code
-  );
 }

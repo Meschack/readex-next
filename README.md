@@ -38,7 +38,7 @@ Requirements:
 
 - Node.js LTS
 - pnpm 11.7.0 through Corepack
-- Rust stable
+- Rust 1.95 (installed automatically by `rustup` from `rust-toolchain.toml`)
 - Tauri system dependencies for your OS
 
 ```bash

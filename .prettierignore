@@ -4,6 +4,7 @@ target/
 apps/desktop/dist/
 apps/desktop/src-tauri/gen/
 apps/desktop/src-tauri/target/
+marketing/sonelle-promo-video/build/
 pnpm-lock.yaml
 Cargo.lock
 LICENSE

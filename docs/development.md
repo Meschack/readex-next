@@ -4,7 +4,7 @@
 
 - Node.js
 - pnpm
-- Rust and Cargo
+- Rust 1.95 and Cargo (selected by the checked-in `rust-toolchain.toml`)
 - Tauri Linux prerequisites when developing on Linux
 
 Tauri's scaffold reported missing Linux desktop dependencies on this machine. Install the platform prerequisites from the official Tauri docs before running the native desktop shell.
@@ -13,8 +13,11 @@ On Debian/Ubuntu-like systems, use the full Tauri prerequisite set:
 
 ```bash
 sudo apt update
-sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+sudo apt install libwebkit2gtk-4.1-dev gstreamer1.0-plugins-bad build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 ```
+
+`gstreamer1.0-plugins-bad` supplies WebKit's `webvttenc` and `fakevideosink` elements. Without it,
+the desktop shell logs degraded subtitle handling and missing video-sink warnings at startup.
 
 If installing dependencies piecemeal, the direct errors seen on this machine were `dbus-1`, `glib-2.0`, and `gdk-3.0`. Those are provided by development packages such as:
 
@@ -142,7 +145,10 @@ This creates a local `.sonelle/` sandbox containing:
 - `voices/piper`: downloaded Piper voice files
 - `piper-smoke-*.wav`: short generated samples proving each voice works
 
-The default in-app voice is `en_US-lessac-medium` (American English). `pnpm setup:piper` also installs `en_GB-alba-medium` so the British English option in settings works locally too.
+The default in-app voice is `en_US-amy-medium` (American English). By default,
+`pnpm setup:piper` installs every voice exposed by the app: American and British English voices plus
+the French voice. The catalog in `packages/audio/src/narration-voices.json` is the source of truth
+for both the setup script and the native fallback.
 
 To install only a specific voice while debugging, pass it when running setup:
 

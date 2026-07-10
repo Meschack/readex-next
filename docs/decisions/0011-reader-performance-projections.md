@@ -43,5 +43,5 @@ common.
 The paragraph projection is intentionally not a domain source of truth. It can be rebuilt from
 chapter body and sentence rows if needed.
 
-Audio transport is still a separate performance concern. Prepared WAVs currently travel as data
-URLs; moving them to Tauri asset URLs requires an explicit asset-protocol scope decision.
+Audio transport was still a separate performance concern when this decision was accepted. Decision
+0012 subsequently moved prepared WAVs to scoped Tauri asset URLs.

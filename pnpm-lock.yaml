@@ -29,6 +29,9 @@ importers:
       '@sonelle/audio':
         specifier: workspace:*
         version: link:../../packages/audio
+      '@sonelle/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       '@sonelle/learning':
         specifier: workspace:*
         version: link:../../packages/learning
@@ -38,6 +41,9 @@ importers:
       '@sonelle/reader':
         specifier: workspace:*
         version: link:../../packages/reader
+      '@sonelle/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
       '@sonelle/text':
         specifier: workspace:*
         version: link:../../packages/text
@@ -75,7 +81,11 @@ importers:
 
   packages/domain: {}
 
-  packages/learning: {}
+  packages/learning:
+    dependencies:
+      '@sonelle/domain':
+        specifier: workspace:*
+        version: link:../domain
 
   packages/library:
     dependencies:

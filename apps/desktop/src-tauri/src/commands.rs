@@ -7,7 +7,8 @@ use crate::audio::{
 use crate::epub_import::import_epub_file;
 use crate::storage::{
     BookExportView, BookmarkView, LibraryBookView, LibrarySearchRequest, LibrarySearchResultView,
-    ReaderDocumentView, SaveBookmarkRequest, SaveReadingPositionRequest, SonelleStore,
+    ReaderDocumentView, RecordDomainEventRequest, SaveBookmarkRequest, SaveReadingPositionRequest,
+    SonelleStore,
 };
 
 #[tauri::command]
@@ -83,6 +84,15 @@ pub async fn save_reading_position(
 ) -> Result<(), String> {
     let store = managed_store(&app);
     run_blocking(move || store.save_reading_position(position)).await
+}
+
+#[tauri::command]
+pub async fn record_domain_event(
+    app: AppHandle,
+    event: RecordDomainEventRequest,
+) -> Result<(), String> {
+    let store = managed_store(&app);
+    run_blocking(move || store.record_domain_event(event)).await
 }
 
 #[tauri::command]

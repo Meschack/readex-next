@@ -6,7 +6,6 @@ use std::{
 
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
@@ -16,142 +15,11 @@ use crate::{
     text::{segment_normalized_paragraphs, segment_paragraphs},
 };
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LibraryBookView {
-    pub id: String,
-    pub title: String,
-    pub author: String,
-    pub cover_image_src: Option<String>,
-    pub imported_at: String,
-    pub chapter_count: i64,
-    pub sentence_count: i64,
-    pub last_chapter_id: Option<String>,
-    pub last_sentence_index: i64,
-}
+mod event_journal;
+mod model;
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReaderDocumentView {
-    pub book: ReaderBookView,
-    pub active_chapter_id: Option<String>,
-    pub chapters: Vec<ReaderChapterView>,
-    pub position: Option<ReadingPositionView>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReaderBookView {
-    pub id: String,
-    pub title: String,
-    pub author: String,
-    pub language: Option<String>,
-    pub cover_image_src: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReaderChapterView {
-    pub id: String,
-    pub title: String,
-    pub index: i64,
-    pub sentence_count: i64,
-    pub sentences: Vec<ReaderSentenceView>,
-    pub paragraphs: Vec<ReaderParagraphView>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReaderParagraphView {
-    pub id: String,
-    pub index: i64,
-    pub start_sentence_index: i64,
-    pub sentence_count: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReaderSentenceView {
-    pub id: String,
-    pub index: i64,
-    pub text: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReadingPositionView {
-    pub book_id: String,
-    pub chapter_id: String,
-    pub sentence_index: i64,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SaveReadingPositionRequest {
-    pub book_id: String,
-    pub chapter_id: String,
-    pub sentence_index: i64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BookmarkView {
-    pub id: String,
-    pub book_id: String,
-    pub book_title: String,
-    pub chapter_id: String,
-    pub chapter_title: String,
-    pub sentence_id: String,
-    pub sentence_index: i64,
-    pub text: String,
-    pub note: Option<String>,
-    pub created_at: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SaveBookmarkRequest {
-    pub book_id: String,
-    pub chapter_id: String,
-    pub sentence_id: String,
-    pub sentence_index: i64,
-    pub text: String,
-    pub note: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LibrarySearchRequest {
-    pub query: String,
-    pub book_id: Option<String>,
-    pub limit: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LibrarySearchResultView {
-    pub id: String,
-    pub kind: String,
-    pub book_id: String,
-    pub book_title: String,
-    pub author: String,
-    pub chapter_id: Option<String>,
-    pub chapter_title: Option<String>,
-    pub sentence_id: Option<String>,
-    pub sentence_index: Option<i64>,
-    pub excerpt: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BookExportView {
-    pub exported_at: String,
-    pub book: ReaderBookView,
-    pub chapters: Vec<ReaderChapterView>,
-    pub position: Option<ReadingPositionView>,
-    pub bookmarks: Vec<BookmarkView>,
-}
+use event_journal::{insert_event, insert_renderer_event};
+pub use model::*;
 
 #[derive(Clone)]
 pub struct SonelleStore {
@@ -176,6 +44,17 @@ impl SonelleStore {
         Ok(store)
     }
 
+    pub fn record_domain_event(&self, event: RecordDomainEventRequest) -> Result<(), String> {
+        let connection = self.connect()?;
+        insert_renderer_event(
+            &connection,
+            &event.id,
+            &event.name,
+            &event.occurred_at,
+            &event.payload,
+        )
+    }
+
     #[cfg(test)]
     fn open_at(db_path: PathBuf) -> Result<Self, String> {
         let covers_dir = db_path
@@ -193,6 +72,15 @@ impl SonelleStore {
     pub fn save_imported_book(&self, book: ImportedBook) -> Result<ReaderDocumentView, String> {
         let mut connection = self.connect()?;
         let imported_at = now();
+        let replaced_existing = connection
+            .query_row(
+                "SELECT 1 FROM books WHERE id = ?1",
+                params![book.id],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(|_| "We couldn't inspect the local library.".to_string())?
+            .is_some();
         let cover_image_src = self.persist_cover(&book.id, book.cover_image.as_ref())?;
         let transaction = connection
             .transaction()
@@ -346,7 +234,8 @@ impl SonelleStore {
             json!({
                 "bookId": book.id,
                 "title": book.title,
-                "chapterCount": book.chapters.len()
+                "chapterCount": book.chapters.len(),
+                "replacedExisting": replaced_existing
             }),
         )?;
 
@@ -595,6 +484,7 @@ impl SonelleStore {
             &connection,
             "BookmarkCreated",
             json!({
+                "bookmarkId": id,
                 "bookId": bookmark.book_id,
                 "chapterId": bookmark.chapter_id,
                 "sentenceId": bookmark.sentence_id,
@@ -606,22 +496,36 @@ impl SonelleStore {
     }
 
     pub fn delete_bookmark(&self, bookmark_id: &str) -> Result<(), String> {
-        let connection = self.connect()?;
-        let deleted = connection
+        let mut connection = self.connect()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|_| "We couldn't prepare that bookmark update.".to_string())?;
+        let book_id = transaction
+            .query_row(
+                "SELECT book_id FROM bookmarks WHERE id = ?1",
+                params![bookmark_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|_| "We couldn't find that bookmark.".to_string())?;
+        let deleted = transaction
             .execute("DELETE FROM bookmarks WHERE id = ?1", params![bookmark_id])
             .map_err(|_| "We couldn't remove that bookmark.".to_string())?;
 
-        if deleted > 0 {
+        if let (true, Some(book_id)) = (deleted > 0, book_id) {
             insert_event(
-                &connection,
+                &transaction,
                 "BookmarkDeleted",
                 json!({
-                    "bookmarkId": bookmark_id
+                    "bookmarkId": bookmark_id,
+                    "bookId": book_id
                 }),
             )?;
         }
 
-        Ok(())
+        transaction
+            .commit()
+            .map_err(|_| "We couldn't finish removing that bookmark.".to_string())
     }
 
     pub fn search_library(
@@ -664,17 +568,20 @@ impl SonelleStore {
 
         let document = self.open_book_for_export(book_id)?;
         let bookmarks = self.list_bookmarks(Some(book_id))?;
+        let exported_at = now();
         insert_event(
             &connection,
             "BookExported",
             json!({
                 "bookId": book_id,
-                "bookmarkCount": bookmarks.len()
+                "bookmarkCount": bookmarks.len(),
+                "exportedAt": exported_at,
+                "fileName": null
             }),
         )?;
 
         Ok(BookExportView {
-            exported_at: now(),
+            exported_at,
             book: document.book,
             chapters: document.chapters,
             position: document.position,
@@ -1283,24 +1190,6 @@ impl SonelleStore {
     }
 }
 
-fn insert_event(
-    connection: &Connection,
-    name: &str,
-    payload: serde_json::Value,
-) -> Result<(), String> {
-    let occurred_at = now();
-    let id = format!("{name}-{occurred_at}");
-
-    connection
-        .execute(
-            "INSERT INTO domain_events (id, name, occurred_at, payload_json)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![id, name, occurred_at, payload.to_string()],
-        )
-        .map(|_| ())
-        .map_err(|_| "We couldn't save the library update.".to_string())
-}
-
 fn ensure_column(
     connection: &Connection,
     table: &str,
@@ -1776,6 +1665,24 @@ mod tests {
             .list_bookmarks(Some("book-search"))
             .expect("bookmarks should list")
             .is_empty());
+        let connection = store.connect().expect("store should connect");
+        let deleted_payload = connection
+            .query_row(
+                "SELECT payload_json FROM domain_events
+                 WHERE name = 'BookmarkDeleted'
+                 ORDER BY occurred_at DESC
+                 LIMIT 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("bookmark deletion event should exist");
+        let deleted_payload: serde_json::Value =
+            serde_json::from_str(&deleted_payload).expect("event payload should be valid JSON");
+        assert_eq!(
+            deleted_payload["bookmarkId"].as_str(),
+            Some(bookmark.id.as_str())
+        );
+        assert_eq!(deleted_payload["bookId"].as_str(), Some("book-search"));
 
         fs::remove_dir_all(temp_dir).ok();
     }
