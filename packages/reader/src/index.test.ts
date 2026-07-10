@@ -147,6 +147,16 @@ describe("reader search", () => {
     expect(sentenceMatchesQuery(sentence, "searchable")).toBe(true);
     expect(searchReaderSentences([sentence], "display")).toEqual([]);
   });
+
+  it("caps common-query results before building an unbounded inspector list", () => {
+    const repeated = Array.from({ length: 200 }, (_, index) => ({
+      id: `sentence-${index}`,
+      index,
+      text: "A repeated reader sentence."
+    }));
+
+    expect(searchReaderSentences(repeated, "reader", 12)).toHaveLength(12);
+  });
 });
 
 describe("sentence render window", () => {

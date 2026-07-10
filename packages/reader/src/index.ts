@@ -213,17 +213,25 @@ export function finishSentencePlayback(
 
 export function searchReaderSentences<TSentence extends SearchableSentence>(
   sentences: TSentence[],
-  query: string
+  query: string,
+  limit = 100
 ): ReaderSearchResult<TSentence>[] {
   const normalizedQuery = normalizeReaderSearchText(query);
-  if (normalizedQuery.length === 0) return [];
+  const safeLimit = Math.max(0, Math.trunc(limit));
+  if (normalizedQuery.length === 0 || safeLimit === 0) return [];
 
-  return sentences
-    .filter((sentence) => searchableSentenceText(sentence).includes(normalizedQuery))
-    .map((sentence) => ({
+  const results: ReaderSearchResult<TSentence>[] = [];
+  for (const sentence of sentences) {
+    if (!searchableSentenceText(sentence).includes(normalizedQuery)) continue;
+
+    results.push({
       sentence,
       excerpt: createSearchExcerpt(sentence.text, normalizedQuery)
-    }));
+    });
+    if (results.length >= safeLimit) break;
+  }
+
+  return results;
 }
 
 export function sentenceMatchesQuery(sentence: SearchableSentence, query: string): boolean {

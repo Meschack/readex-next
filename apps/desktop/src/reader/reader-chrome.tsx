@@ -1,36 +1,66 @@
 import { For, Show } from "solid-js";
 import type { PlaybackStatus, ReaderProgress } from "@sonelle/reader";
-import { BookCover } from "./book-cover";
 import type { ReaderChapterNavigationItem } from "./reader-view";
 import {
   BookmarkIcon,
   HeadphonesIcon,
-  MoreIcon,
   NextIcon,
   PauseIcon,
   PlayIcon,
-  PreviousIcon
+  PreviousIcon,
+  SearchIcon,
+  SettingsIcon
 } from "./reader-icons";
 
+export function ProductBar() {
+  return (
+    <header class="product-bar">
+      <div class="product-brand">
+        <img src="/sonelle-icon.png" alt="" aria-hidden="true" />
+        <strong>Sonelle</strong>
+      </div>
+      <span class="product-tagline">Your private reading desk</span>
+      <span class="product-local-status">
+        <span aria-hidden="true" />
+        Stored locally
+      </span>
+    </header>
+  );
+}
+
 interface ReaderTopAppBarProps {
-  bookTitle: string;
+  chapterTitle: string;
+  activeChapterId: string;
+  chapters: ReaderChapterNavigationItem[];
+  sentenceCount: number;
   onOpenSearch: () => void;
   onOpenSettings: () => void;
 }
 
 export function ReaderTopAppBar(props: ReaderTopAppBarProps) {
+  const chapterNumber = () =>
+    Math.max(1, props.chapters.findIndex((chapter) => chapter.id === props.activeChapterId) + 1);
+
   return (
     <header class="top-app-bar">
       <div class="top-reading-title">
         <span>Now reading</span>
-        <strong>{props.bookTitle}</strong>
+        <strong>{props.chapterTitle}</strong>
+      </div>
+      <div class="top-reading-meta">
+        <span>
+          Chapter {chapterNumber()} of {props.chapters.length}
+        </span>
+        <span>
+          {props.sentenceCount} sentence{props.sentenceCount === 1 ? "" : "s"}
+        </span>
       </div>
       <div class="top-app-actions">
         <button type="button" aria-label="Open search" onClick={props.onOpenSearch}>
-          <HeadphonesIcon />
+          <SearchIcon />
         </button>
         <button type="button" aria-label="Open settings" onClick={props.onOpenSettings}>
-          <MoreIcon />
+          <SettingsIcon />
         </button>
       </div>
     </header>
@@ -80,9 +110,7 @@ export function ChapterNavigator(props: ChapterNavigatorProps) {
 }
 
 interface PlaybackRailProps {
-  bookTitle: string;
-  author: string;
-  coverImageSrc: string | null;
+  chapterNumber: number;
   chapterTitle: string;
   progress: ReaderProgress;
   sentenceCount: number;
@@ -106,13 +134,6 @@ export function PlaybackRail(props: PlaybackRailProps) {
   return (
     <footer class="audio-rail" aria-label="Playback controls">
       <div class="track-info">
-        <BookCover className="cover-art" title={props.bookTitle} src={props.coverImageSrc} />
-        <div>
-          <strong>{props.chapterTitle}</strong>
-          <span>{props.author || props.bookTitle}</span>
-        </div>
-      </div>
-      <div class="transport-stack">
         <div class="transport-controls">
           <button
             class="icon-button"
@@ -144,17 +165,29 @@ export function PlaybackRail(props: PlaybackRailProps) {
             <NextIcon />
           </button>
         </div>
+        <div class="playback-copy">
+          <strong>
+            {props.status === "playing" ? "Playing" : "Paused on"} Chapter {props.chapterNumber}
+          </strong>
+          <span>
+            Sentence {props.progress.chapterSentenceNumber} of {props.progress.chapterSentenceCount}
+          </span>
+        </div>
+      </div>
+      <div class="transport-stack">
         <div class="audio-progress" aria-label="Reading progress">
-          <span>{props.progress.chapterSentenceNumber}</span>
           <div class="progress-track" aria-hidden="true">
-            <span style={{ width: `${props.progress.chapterPercent}%` }} />
+            <span style={{ width: `${props.progress.bookPercent}%` }} />
           </div>
-          <span>{props.progress.chapterSentenceCount}</span>
         </div>
       </div>
       <div class="essential-actions">
-        <span classList={{ "narration-status": true, attention: props.narrationNotice != null }}>
-          {props.narrationStatus}
+        <HeadphonesIcon />
+        <span
+          classList={{ "narration-status": true, attention: props.narrationNotice != null }}
+          title={props.narrationNotice ?? props.narrationStatus}
+        >
+          {props.narrationNotice ?? props.narrationStatus}
         </span>
         <button
           classList={{
@@ -169,6 +202,7 @@ export function PlaybackRail(props: PlaybackRailProps) {
         >
           <BookmarkIcon />
         </button>
+        <span class="reading-percent">{Math.round(props.progress.bookPercent)}% read</span>
         <span class="speed-label">{props.playbackRate.toFixed(1)}x</span>
       </div>
     </footer>

@@ -6,6 +6,7 @@ import {
   FakeNarrationGateway,
   estimateSentenceDurationSec,
   parseAudioSettings,
+  resolveNarrationVoiceForLanguage,
   serializeAudioSettings,
   type NarrationGateway,
   type SentenceNarration,
@@ -69,6 +70,15 @@ describe("sentence narration", () => {
       voiceId: DEFAULT_NARRATION_VOICE_ID,
       autoAdvance: true
     });
+  });
+
+  it("matches the persisted voice to the active book language", () => {
+    expect(resolveNarrationVoiceForLanguage("fr-FR", "en_US-amy-medium")).toBe(
+      "fr_FR-siwis-medium"
+    );
+    expect(resolveNarrationVoiceForLanguage("en-GB", "en_US-amy-medium")).toBe("en_US-amy-medium");
+    expect(resolveNarrationVoiceForLanguage("en", "en_GB-alba-medium")).toBe("en_GB-alba-medium");
+    expect(resolveNarrationVoiceForLanguage(null, "fr_FR-siwis-medium")).toBe("fr_FR-siwis-medium");
   });
 
   it("reuses prefetched narration instead of preparing the same sentence twice", async () => {

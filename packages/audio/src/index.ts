@@ -180,6 +180,28 @@ export function narrationVoiceLabel(voiceId: string): string {
   );
 }
 
+export function resolveNarrationVoiceForLanguage(
+  language: string | null | undefined,
+  currentVoiceId: string
+): string {
+  const languageCode = normalizeLanguageCode(language);
+  const currentVoice = SUPPORTED_NARRATION_VOICES.find((voice) => voice.id === currentVoiceId);
+  if (languageCode == null || currentVoice == null) return currentVoiceId;
+
+  const currentVoiceLanguage = normalizeLanguageCode(currentVoice.locale);
+  if (currentVoiceLanguage === languageCode) return currentVoiceId;
+
+  const exactLocaleVoice = SUPPORTED_NARRATION_VOICES.find(
+    (voice) => normalizeLocale(voice.locale) === normalizeLocale(language)
+  );
+  if (exactLocaleVoice != null) return exactLocaleVoice.id;
+
+  return (
+    SUPPORTED_NARRATION_VOICES.find((voice) => normalizeLanguageCode(voice.locale) === languageCode)
+      ?.id ?? DEFAULT_NARRATION_VOICE_ID
+  );
+}
+
 function clampPlaybackRate(rate: number): number {
   if (!Number.isFinite(rate)) return DEFAULT_AUDIO_SETTINGS.playbackRate;
   return Math.min(1.5, Math.max(0.75, rate));
@@ -188,6 +210,33 @@ function clampPlaybackRate(rate: number): number {
 function normalizeNarrationVoiceId(voiceId: string | undefined): string {
   if (voiceId != null && isSupportedNarrationVoiceId(voiceId)) return voiceId;
   return DEFAULT_AUDIO_SETTINGS.voiceId;
+}
+
+function normalizeLanguageCode(language: string | null | undefined): string | null {
+  if (language == null) return null;
+  const code = language.trim().toLocaleLowerCase().split(/[-_]/u)[0];
+  if (code.length === 0) return null;
+
+  return (
+    (
+      {
+        eng: "en",
+        fre: "fr",
+        fra: "fr",
+        deu: "de",
+        ger: "de",
+        spa: "es",
+        ita: "it",
+        por: "pt"
+      } as Record<string, string>
+    )[code] ?? code
+  );
+}
+
+function normalizeLocale(language: string | null | undefined): string | null {
+  if (language == null) return null;
+  const locale = language.trim().toLocaleLowerCase().replace(/_/gu, "-");
+  return locale.length > 0 ? locale : null;
 }
 
 function narrationRequestKey(request: SentenceNarrationRequest): string {

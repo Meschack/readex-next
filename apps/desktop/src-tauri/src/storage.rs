@@ -1,4 +1,8 @@
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -8,8 +12,8 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 
 use crate::{
-    epub_import::ImportedBook,
-    text::{normalize_reader_paragraphs, segment_normalized_paragraphs, segment_paragraphs},
+    epub_import::{read_epub_language, ImportedBook, ImportedCover},
+    text::{segment_normalized_paragraphs, segment_paragraphs},
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -41,6 +45,7 @@ pub struct ReaderBookView {
     pub id: String,
     pub title: String,
     pub author: String,
+    pub language: Option<String>,
     pub cover_image_src: Option<String>,
 }
 
@@ -60,7 +65,8 @@ pub struct ReaderChapterView {
 pub struct ReaderParagraphView {
     pub id: String,
     pub index: i64,
-    pub sentences: Vec<ReaderSentenceView>,
+    pub start_sentence_index: i64,
+    pub sentence_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -69,13 +75,6 @@ pub struct ReaderSentenceView {
     pub id: String,
     pub index: i64,
     pub text: String,
-}
-
-struct ParagraphRange {
-    id: String,
-    index: i64,
-    start_sentence_index: i64,
-    sentence_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -154,8 +153,10 @@ pub struct BookExportView {
     pub bookmarks: Vec<BookmarkView>,
 }
 
+#[derive(Clone)]
 pub struct SonelleStore {
     db_path: PathBuf,
+    covers_dir: PathBuf,
 }
 
 impl SonelleStore {
@@ -168,6 +169,7 @@ impl SonelleStore {
             .map_err(|_| "We couldn't prepare the local library folder.".to_string())?;
         let store = Self {
             db_path: app_dir.join("sonelle.sqlite3"),
+            covers_dir: app_dir.join("covers"),
         };
 
         store.init()?;
@@ -176,7 +178,14 @@ impl SonelleStore {
 
     #[cfg(test)]
     fn open_at(db_path: PathBuf) -> Result<Self, String> {
-        let store = Self { db_path };
+        let covers_dir = db_path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join("covers");
+        let store = Self {
+            db_path,
+            covers_dir,
+        };
         store.init()?;
         Ok(store)
     }
@@ -184,24 +193,27 @@ impl SonelleStore {
     pub fn save_imported_book(&self, book: ImportedBook) -> Result<ReaderDocumentView, String> {
         let mut connection = self.connect()?;
         let imported_at = now();
+        let cover_image_src = self.persist_cover(&book.id, book.cover_image.as_ref())?;
         let transaction = connection
             .transaction()
             .map_err(|_| "We couldn't save that book.".to_string())?;
 
         transaction
             .execute(
-                "INSERT INTO books (id, title, author, cover_image_src, source_path, imported_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                "INSERT INTO books (id, title, author, language, cover_image_src, source_path, imported_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(id) DO UPDATE SET
                    title = excluded.title,
                    author = excluded.author,
+                   language = excluded.language,
                    cover_image_src = excluded.cover_image_src,
                    source_path = excluded.source_path",
                 params![
                     book.id,
                     book.title,
                     book.author,
-                    book.cover_image_src,
+                    book.language,
+                    cover_image_src,
                     book.source_path,
                     imported_at
                 ],
@@ -223,8 +235,8 @@ impl SonelleStore {
         {
             let mut insert_chapter = transaction
                 .prepare(
-                    "INSERT INTO chapters (id, book_id, title, position, body)
-                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    "INSERT INTO chapters (id, book_id, title, position, body, sentence_count)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 )
                 .map_err(|_| "We couldn't save a chapter from that book.".to_string())?;
             let mut insert_sentence = transaction
@@ -247,9 +259,15 @@ impl SonelleStore {
                 )
                 .map_err(|_| "We couldn't save a paragraph from that book.".to_string())?;
 
+            let mut total_sentence_count = 0_i64;
             for chapter in &book.chapters {
-                let normalized_body = normalize_reader_paragraphs(&chapter.body);
+                let normalized_body = chapter.body.clone();
                 let paragraph_sentences = segment_normalized_paragraphs(&normalized_body);
+                let chapter_sentence_count = paragraph_sentences
+                    .iter()
+                    .map(|sentences| sentences.len() as i64)
+                    .sum::<i64>();
+                total_sentence_count += chapter_sentence_count;
 
                 insert_chapter
                     .execute(params![
@@ -257,7 +275,8 @@ impl SonelleStore {
                         book.id,
                         chapter.title,
                         chapter.index as i64,
-                        normalized_body
+                        normalized_body,
+                        chapter_sentence_count
                     ])
                     .map_err(|_| "We couldn't save a chapter from that book.".to_string())?;
 
@@ -297,6 +316,15 @@ impl SonelleStore {
                     }
                 }
             }
+
+            transaction
+                .execute(
+                    "UPDATE books
+                     SET chapter_count = ?2, sentence_count = ?3
+                     WHERE id = ?1",
+                    params![book.id, book.chapters.len() as i64, total_sentence_count],
+                )
+                .map_err(|_| "We couldn't finish saving that book.".to_string())?;
         }
 
         let first_chapter = book
@@ -332,29 +360,17 @@ impl SonelleStore {
         let connection = self.connect()?;
         let mut statement = connection
             .prepare(
-                "WITH chapter_counts AS (
-                    SELECT book_id, COUNT(*) AS chapter_count
-                    FROM chapters
-                    GROUP BY book_id
-                 ),
-                 sentence_counts AS (
-                    SELECT book_id, COUNT(*) AS sentence_count
-                    FROM sentences
-                    GROUP BY book_id
-                 )
-                 SELECT
+                "SELECT
                     books.id,
                     books.title,
                     books.author,
                     books.cover_image_src,
                     books.imported_at,
-                    COALESCE(chapter_counts.chapter_count, 0) AS chapter_count,
-                    COALESCE(sentence_counts.sentence_count, 0) AS sentence_count,
+                    books.chapter_count,
+                    books.sentence_count,
                     reading_positions.chapter_id,
                     COALESCE(reading_positions.sentence_index, 0)
                  FROM books
-                 LEFT JOIN chapter_counts ON chapter_counts.book_id = books.id
-                 LEFT JOIN sentence_counts ON sentence_counts.book_id = books.id
                  LEFT JOIN reading_positions ON reading_positions.book_id = books.id
                  ORDER BY books.imported_at DESC",
             )
@@ -397,8 +413,7 @@ impl SonelleStore {
 
         if let Some(chapter_id) = active_chapter_id.as_deref() {
             let sentences = self.read_sentences_for_chapter(&connection, chapter_id)?;
-            let paragraphs =
-                self.read_paragraphs_for_chapter(&connection, chapter_id, &sentences)?;
+            let paragraphs = self.read_paragraphs_for_chapter(&connection, chapter_id)?;
             if let Some(chapter) = chapters.iter_mut().find(|entry| entry.id == chapter_id) {
                 chapter.sentences = sentences;
                 chapter.paragraphs = paragraphs;
@@ -629,7 +644,7 @@ impl SonelleStore {
             results.extend(self.search_sentences(
                 &connection,
                 request.book_id.as_deref(),
-                &pattern,
+                &query,
                 remaining,
             )?);
         }
@@ -669,6 +684,15 @@ impl SonelleStore {
 
     fn init(&self) -> Result<(), String> {
         let connection = self.connect()?;
+        let has_sentence_search = connection
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sentence_search'",
+                [],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(|_| "We couldn't inspect the local library.".to_string())?
+            .is_some();
         connection
             .execute_batch(
                 "
@@ -678,9 +702,12 @@ impl SonelleStore {
                     id TEXT PRIMARY KEY,
                     title TEXT NOT NULL,
                     author TEXT NOT NULL,
+                    language TEXT,
                     cover_image_src TEXT,
                     source_path TEXT NOT NULL,
-                    imported_at TEXT NOT NULL
+                    imported_at TEXT NOT NULL,
+                    chapter_count INTEGER NOT NULL DEFAULT 0,
+                    sentence_count INTEGER NOT NULL DEFAULT 0
                 );
 
                 CREATE TABLE IF NOT EXISTS chapters (
@@ -688,7 +715,8 @@ impl SonelleStore {
                     book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
                     title TEXT NOT NULL,
                     position INTEGER NOT NULL,
-                    body TEXT NOT NULL
+                    body TEXT NOT NULL,
+                    sentence_count INTEGER NOT NULL DEFAULT 0
                 );
 
                 CREATE TABLE IF NOT EXISTS sentences (
@@ -744,32 +772,127 @@ impl SonelleStore {
                     ON paragraphs(chapter_id, position);
                 CREATE INDEX IF NOT EXISTS idx_bookmarks_book_created
                     ON bookmarks(book_id, created_at);
+
+                CREATE VIRTUAL TABLE IF NOT EXISTS sentence_search USING fts5(
+                    text,
+                    content = 'sentences',
+                    content_rowid = 'rowid',
+                    tokenize = 'unicode61 remove_diacritics 2'
+                );
+
+                CREATE TRIGGER IF NOT EXISTS sentences_search_insert
+                AFTER INSERT ON sentences BEGIN
+                    INSERT INTO sentence_search(rowid, text) VALUES (new.rowid, new.text);
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS sentences_search_delete
+                AFTER DELETE ON sentences BEGIN
+                    INSERT INTO sentence_search(sentence_search, rowid, text)
+                    VALUES ('delete', old.rowid, old.text);
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS sentences_search_update
+                AFTER UPDATE OF text ON sentences BEGIN
+                    INSERT INTO sentence_search(sentence_search, rowid, text)
+                    VALUES ('delete', old.rowid, old.text);
+                    INSERT INTO sentence_search(rowid, text) VALUES (new.rowid, new.text);
+                END;
                 ",
             )
             .map_err(|_| "We couldn't prepare the local library.".to_string())?;
 
+        if !has_sentence_search {
+            connection
+                .execute(
+                    "INSERT INTO sentence_search(sentence_search) VALUES ('rebuild')",
+                    [],
+                )
+                .map_err(|_| "We couldn't index the local library.".to_string())?;
+        }
+
         ensure_column(&connection, "books", "cover_image_src", "TEXT")?;
+        ensure_column(&connection, "books", "language", "TEXT")?;
+        let added_book_chapter_count = ensure_column(
+            &connection,
+            "books",
+            "chapter_count",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        let added_book_sentence_count = ensure_column(
+            &connection,
+            "books",
+            "sentence_count",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+        let added_chapter_sentence_count = ensure_column(
+            &connection,
+            "chapters",
+            "sentence_count",
+            "INTEGER NOT NULL DEFAULT 0",
+        )?;
+
+        if added_book_chapter_count || added_book_sentence_count {
+            connection
+                .execute_batch(
+                    "UPDATE books
+                     SET chapter_count = (
+                            SELECT COUNT(*) FROM chapters WHERE chapters.book_id = books.id
+                         ),
+                         sentence_count = (
+                            SELECT COUNT(*) FROM sentences WHERE sentences.book_id = books.id
+                         );",
+                )
+                .map_err(|_| "We couldn't update library summaries.".to_string())?;
+        }
+
+        if added_chapter_sentence_count {
+            connection
+                .execute_batch(
+                    "UPDATE chapters
+                     SET sentence_count = (
+                        SELECT COUNT(*) FROM sentences WHERE sentences.chapter_id = chapters.id
+                     );",
+                )
+                .map_err(|_| "We couldn't update chapter summaries.".to_string())?;
+        }
 
         Ok(())
     }
 
     fn read_book(&self, connection: &Connection, book_id: &str) -> Result<ReaderBookView, String> {
-        connection
+        let (mut book, source_path) = connection
             .query_row(
-                "SELECT id, title, author, cover_image_src FROM books WHERE id = ?1",
+                "SELECT id, title, author, language, cover_image_src, source_path
+                 FROM books WHERE id = ?1",
                 params![book_id],
                 |row| {
-                    Ok(ReaderBookView {
-                        id: row.get(0)?,
-                        title: row.get(1)?,
-                        author: row.get(2)?,
-                        cover_image_src: row.get(3)?,
-                    })
+                    Ok((
+                        ReaderBookView {
+                            id: row.get(0)?,
+                            title: row.get(1)?,
+                            author: row.get(2)?,
+                            language: row.get(3)?,
+                            cover_image_src: row.get(4)?,
+                        },
+                        row.get::<_, String>(5)?,
+                    ))
                 },
             )
             .optional()
             .map_err(|_| "We couldn't open that book.".to_string())?
-            .ok_or_else(|| "We couldn't find that book in your library.".to_string())
+            .ok_or_else(|| "We couldn't find that book in your library.".to_string())?;
+
+        if book.language.is_none() {
+            if let Some(language) = read_epub_language(Path::new(&source_path)) {
+                let _ = connection.execute(
+                    "UPDATE books SET language = ?1 WHERE id = ?2",
+                    params![&language, &book.id],
+                );
+                book.language = Some(language);
+            }
+        }
+
+        Ok(book)
     }
 
     fn read_position(
@@ -802,19 +925,12 @@ impl SonelleStore {
     ) -> Result<Vec<ReaderChapterView>, String> {
         let mut statement = connection
             .prepare(
-                "WITH sentence_counts AS (
-                    SELECT chapter_id, COUNT(*) AS sentence_count
-                    FROM sentences
-                    WHERE book_id = ?1
-                    GROUP BY chapter_id
-                 )
-                 SELECT
+                "SELECT
                     chapters.id,
                     chapters.title,
                     chapters.position,
-                    COALESCE(sentence_counts.sentence_count, 0) AS sentence_count
+                    chapters.sentence_count
                  FROM chapters
-                 LEFT JOIN sentence_counts ON sentence_counts.chapter_id = chapters.id
                  WHERE chapters.book_id = ?1
                  ORDER BY chapters.position ASC",
             )
@@ -856,8 +972,7 @@ impl SonelleStore {
         }
 
         for chapter in &mut chapters {
-            chapter.paragraphs =
-                self.read_paragraphs_for_chapter(connection, &chapter.id, &chapter.sentences)?;
+            chapter.paragraphs = self.read_paragraphs_for_chapter(connection, &chapter.id)?;
         }
 
         Ok(chapters)
@@ -895,10 +1010,8 @@ impl SonelleStore {
         &self,
         connection: &Connection,
         chapter_id: &str,
-        sentences: &[ReaderSentenceView],
     ) -> Result<Vec<ReaderParagraphView>, String> {
-        let persisted =
-            self.read_persisted_paragraphs_for_chapter(connection, chapter_id, sentences)?;
+        let persisted = self.read_persisted_paragraphs_for_chapter(connection, chapter_id)?;
         if !persisted.is_empty() {
             return Ok(persisted);
         }
@@ -910,7 +1023,6 @@ impl SonelleStore {
         &self,
         connection: &Connection,
         chapter_id: &str,
-        sentences: &[ReaderSentenceView],
     ) -> Result<Vec<ReaderParagraphView>, String> {
         let mut statement = connection
             .prepare(
@@ -920,9 +1032,9 @@ impl SonelleStore {
                  ORDER BY position ASC",
             )
             .map_err(|_| "We couldn't read that chapter.".to_string())?;
-        let ranges = statement
+        let paragraphs = statement
             .query_map(params![chapter_id], |row| {
-                Ok(ParagraphRange {
+                Ok(ReaderParagraphView {
                     id: row.get(0)?,
                     index: row.get(1)?,
                     start_sentence_index: row.get(2)?,
@@ -932,44 +1044,6 @@ impl SonelleStore {
             .map_err(|_| "We couldn't read that chapter.".to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| "We couldn't read that chapter.".to_string())?;
-
-        if ranges.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let mut sentence_by_index = None;
-        let mut paragraphs = Vec::new();
-
-        for range in ranges {
-            let paragraph_sentences = sentence_slice_for_range(
-                sentences,
-                range.start_sentence_index,
-                range.sentence_count,
-            )
-            .unwrap_or_else(|| {
-                let index = sentence_by_index.get_or_insert_with(|| {
-                    sentences
-                        .iter()
-                        .map(|sentence| (sentence.index, sentence))
-                        .collect::<HashMap<_, _>>()
-                });
-
-                (range.start_sentence_index..range.start_sentence_index + range.sentence_count)
-                    .filter_map(|sentence_index| index.get(&sentence_index))
-                    .map(|sentence| (*sentence).clone())
-                    .collect::<Vec<_>>()
-            });
-
-            if paragraph_sentences.is_empty() {
-                continue;
-            }
-
-            paragraphs.push(ReaderParagraphView {
-                id: range.id,
-                index: range.index,
-                sentences: paragraph_sentences,
-            });
-        }
 
         Ok(paragraphs)
     }
@@ -994,24 +1068,15 @@ impl SonelleStore {
             .into_iter()
             .enumerate()
             .map(|(paragraph_index, sentences)| {
-                let paragraph_sentences = sentences
-                    .into_iter()
-                    .map(|text| {
-                        let current_index = sentence_index;
-                        sentence_index += 1;
-
-                        ReaderSentenceView {
-                            id: format!("{chapter_id}:sentence-{}", current_index + 1),
-                            index: current_index,
-                            text,
-                        }
-                    })
-                    .collect();
+                let start_sentence_index = sentence_index;
+                let sentence_count = sentences.len() as i64;
+                sentence_index += sentence_count;
 
                 ReaderParagraphView {
                     id: format!("{chapter_id}:paragraph-{}", paragraph_index + 1),
                     index: paragraph_index as i64,
-                    sentences: paragraph_sentences,
+                    start_sentence_index,
+                    sentence_count,
                 }
             })
             .collect())
@@ -1127,9 +1192,14 @@ impl SonelleStore {
         &self,
         connection: &Connection,
         book_id: Option<&str>,
-        pattern: &str,
+        query: &str,
         limit: i64,
     ) -> Result<Vec<LibrarySearchResultView>, String> {
+        let search_query = fts_search_query(query);
+        if search_query.is_empty() {
+            return Ok(Vec::new());
+        }
+
         let mut statement = connection
             .prepare(
                 "SELECT
@@ -1141,18 +1211,20 @@ impl SonelleStore {
                     chapters.title,
                     sentences.position,
                     sentences.text
-                 FROM sentences
+                 FROM sentence_search
+                 INNER JOIN sentences ON sentences.rowid = sentence_search.rowid
                  INNER JOIN books ON books.id = sentences.book_id
                  INNER JOIN chapters ON chapters.id = sentences.chapter_id
                  WHERE (?1 IS NULL OR books.id = ?1)
-                   AND LOWER(sentences.text) LIKE ?2 ESCAPE '\\'
-                 ORDER BY books.imported_at DESC, chapters.position ASC, sentences.position ASC
+                   AND sentence_search MATCH ?2
+                 ORDER BY bm25(sentence_search), books.imported_at DESC,
+                          chapters.position ASC, sentences.position ASC
                  LIMIT ?3",
             )
             .map_err(|_| "We couldn't search your library.".to_string())?;
 
         let results = statement
-            .query_map(params![book_id, pattern, limit], |row| {
+            .query_map(params![book_id, search_query, limit], |row| {
                 let sentence_id: String = row.get(0)?;
 
                 Ok(LibrarySearchResultView {
@@ -1175,9 +1247,39 @@ impl SonelleStore {
         Ok(results)
     }
 
+    fn persist_cover(
+        &self,
+        book_id: &str,
+        cover: Option<&ImportedCover>,
+    ) -> Result<Option<String>, String> {
+        let Some(cover) = cover else {
+            return Ok(None);
+        };
+
+        fs::create_dir_all(&self.covers_dir)
+            .map_err(|_| "We couldn't save that book cover.".to_string())?;
+        let digest = Sha256::digest(book_id.as_bytes());
+        let path = self.covers_dir.join(format!(
+            "cover-{}.{}",
+            hex_prefix(&digest, 24),
+            cover_file_extension(&cover.media_type)
+        ));
+        fs::write(&path, &cover.bytes)
+            .map_err(|_| "We couldn't save that book cover.".to_string())?;
+
+        Ok(Some(path.to_string_lossy().into_owned()))
+    }
+
     fn connect(&self) -> Result<Connection, String> {
-        Connection::open(&self.db_path)
-            .map_err(|_| "We couldn't open the local library.".to_string())
+        let connection = Connection::open(&self.db_path)
+            .map_err(|_| "We couldn't open the local library.".to_string())?;
+        connection
+            .execute_batch(
+                "PRAGMA foreign_keys = ON;
+                 PRAGMA busy_timeout = 5000;",
+            )
+            .map_err(|_| "We couldn't prepare the local library connection.".to_string())?;
+        Ok(connection)
     }
 }
 
@@ -1204,7 +1306,7 @@ fn ensure_column(
     table: &str,
     column: &str,
     definition: &str,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let escaped_table = table.replace('"', "\"\"");
     let mut statement = connection
         .prepare(&format!("PRAGMA table_info(\"{escaped_table}\")"))
@@ -1216,7 +1318,7 @@ fn ensure_column(
         .map_err(|_| "We couldn't prepare the local library.".to_string())?;
 
     if columns.iter().any(|name| name == column) {
-        return Ok(());
+        return Ok(false);
     }
 
     let escaped_column = column.replace('"', "\"\"");
@@ -1227,7 +1329,7 @@ fn ensure_column(
             ),
             [],
         )
-        .map(|_| ())
+        .map(|_| true)
         .map_err(|_| "We couldn't prepare the local library.".to_string())
 }
 
@@ -1244,28 +1346,6 @@ fn read_bookmark_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BookmarkView> 
         note: row.get(8)?,
         created_at: row.get(9)?,
     })
-}
-
-fn sentence_slice_for_range(
-    sentences: &[ReaderSentenceView],
-    start_sentence_index: i64,
-    sentence_count: i64,
-) -> Option<Vec<ReaderSentenceView>> {
-    if start_sentence_index < 0 || sentence_count <= 0 {
-        return None;
-    }
-
-    let start = usize::try_from(start_sentence_index).ok()?;
-    let count = usize::try_from(sentence_count).ok()?;
-    let end = start.checked_add(count)?;
-    let slice = sentences.get(start..end)?;
-    let expected_end_index = start_sentence_index + sentence_count - 1;
-
-    if slice.first()?.index != start_sentence_index || slice.last()?.index != expected_end_index {
-        return None;
-    }
-
-    Some(slice.to_vec())
 }
 
 fn resolve_active_chapter_id(
@@ -1308,6 +1388,30 @@ fn like_pattern(query: &str) -> String {
     format!("%{escaped}%")
 }
 
+fn fts_search_query(query: &str) -> String {
+    query
+        .split_whitespace()
+        .filter_map(|term| {
+            let token = term
+                .chars()
+                .filter(|character| character.is_alphanumeric())
+                .collect::<String>();
+            (!token.is_empty()).then(|| format!("\"{}\"*", token.replace('"', "\"\"")))
+        })
+        .collect::<Vec<_>>()
+        .join(" AND ")
+}
+
+fn cover_file_extension(media_type: &str) -> &'static str {
+    match media_type {
+        "image/jpeg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/svg+xml" => "svg",
+        _ => "png",
+    }
+}
+
 fn hex_prefix(bytes: &[u8], length: usize) -> String {
     bytes
         .iter()
@@ -1333,24 +1437,25 @@ mod tests {
     use chrono::Utc;
 
     use super::{
-        BookExportView, LibrarySearchRequest, ReaderChapterView, ReaderDocumentView, SonelleStore,
-        SaveBookmarkRequest, SaveReadingPositionRequest,
+        BookExportView, LibrarySearchRequest, ReaderChapterView, ReaderDocumentView,
+        SaveBookmarkRequest, SaveReadingPositionRequest, SonelleStore,
     };
-    use crate::epub_import::{import_epub_file, ImportedBook, ImportedChapter};
+    use crate::epub_import::{import_epub_file, ImportedBook, ImportedChapter, ImportedCover};
     use rusqlite::{params, Connection};
 
     #[test]
     fn saves_books_and_restores_reading_position() {
         let temp_dir = temp_store_dir();
         fs::create_dir_all(&temp_dir).expect("test store dir should be created");
-        let store =
-            SonelleStore::open_at(temp_dir.join("sonelle.sqlite3")).expect("store should initialize");
+        let store = SonelleStore::open_at(temp_dir.join("sonelle.sqlite3"))
+            .expect("store should initialize");
         let document = store
             .save_imported_book(ImportedBook {
                 id: "book-test".to_string(),
                 title: "Test Book".to_string(),
                 author: "Test Author".to_string(),
-                cover_image_src: None,
+                language: Some("fr-FR".to_string()),
+                cover_image: None,
                 source_path: "/tmp/test.epub".to_string(),
                 chapters: vec![ImportedChapter {
                     id: "book-test:chapter-1".to_string(),
@@ -1362,6 +1467,7 @@ mod tests {
             .expect("book should save");
 
         assert_eq!(document.book.title, "Test Book");
+        assert_eq!(document.book.language.as_deref(), Some("fr-FR"));
         assert_eq!(document.chapters[0].sentences.len(), 2);
         assert_eq!(store.list_books().expect("books should list").len(), 1);
 
@@ -1383,6 +1489,7 @@ mod tests {
                 .sentence_index,
             1
         );
+        assert_eq!(reopened.book.language.as_deref(), Some("fr-FR"));
 
         fs::remove_dir_all(temp_dir).ok();
     }
@@ -1407,13 +1514,17 @@ mod tests {
             )
             .expect("legacy books table should be created");
         let store = SonelleStore::open_at(db_path).expect("store should migrate");
-        let cover_image_src = "data:image/png;base64,Y292ZXI=".to_string();
+        let cover_bytes = b"cover".to_vec();
         let document = store
             .save_imported_book(ImportedBook {
                 id: "book-cover".to_string(),
                 title: "Covered Book".to_string(),
                 author: "Test Author".to_string(),
-                cover_image_src: Some(cover_image_src.clone()),
+                language: None,
+                cover_image: Some(ImportedCover {
+                    media_type: "image/png".to_string(),
+                    bytes: cover_bytes.clone(),
+                }),
                 source_path: "/tmp/cover.epub".to_string(),
                 chapters: vec![ImportedChapter {
                     id: "book-cover:chapter-1".to_string(),
@@ -1428,18 +1539,17 @@ mod tests {
             .open_book("book-cover", None)
             .expect("book should reopen");
 
+        let cover_path = document
+            .book
+            .cover_image_src
+            .as_deref()
+            .expect("cover path should persist");
         assert_eq!(
-            document.book.cover_image_src.as_deref(),
-            Some(cover_image_src.as_str())
+            fs::read(cover_path).expect("cover should read"),
+            cover_bytes
         );
-        assert_eq!(
-            books[0].cover_image_src.as_deref(),
-            Some(cover_image_src.as_str())
-        );
-        assert_eq!(
-            reopened.book.cover_image_src.as_deref(),
-            Some(cover_image_src.as_str())
-        );
+        assert_eq!(books[0].cover_image_src.as_deref(), Some(cover_path));
+        assert_eq!(reopened.book.cover_image_src.as_deref(), Some(cover_path));
 
         fs::remove_dir_all(temp_dir).ok();
     }
@@ -1448,15 +1558,16 @@ mod tests {
     fn lists_books_without_multiplying_chapters_by_sentences() {
         let temp_dir = temp_store_dir();
         fs::create_dir_all(&temp_dir).expect("test store dir should be created");
-        let store =
-            SonelleStore::open_at(temp_dir.join("sonelle.sqlite3")).expect("store should initialize");
+        let store = SonelleStore::open_at(temp_dir.join("sonelle.sqlite3"))
+            .expect("store should initialize");
 
         store
             .save_imported_book(ImportedBook {
                 id: "book-counts".to_string(),
                 title: "Counted Book".to_string(),
                 author: "Test Author".to_string(),
-                cover_image_src: None,
+                language: None,
+                cover_image: None,
                 source_path: "/tmp/counts.epub".to_string(),
                 chapters: vec![
                     ImportedChapter {
@@ -1488,15 +1599,16 @@ mod tests {
     fn opens_reader_payload_with_only_active_chapter_sentences() {
         let temp_dir = temp_store_dir();
         fs::create_dir_all(&temp_dir).expect("test store dir should be created");
-        let store =
-            SonelleStore::open_at(temp_dir.join("sonelle.sqlite3")).expect("store should initialize");
+        let store = SonelleStore::open_at(temp_dir.join("sonelle.sqlite3"))
+            .expect("store should initialize");
 
         let document = store
             .save_imported_book(ImportedBook {
                 id: "book-active".to_string(),
                 title: "Active Book".to_string(),
                 author: "Test Author".to_string(),
-                cover_image_src: None,
+                language: None,
+                cover_image: None,
                 source_path: "/tmp/active.epub".to_string(),
                 chapters: vec![
                     ImportedChapter {
@@ -1562,15 +1674,16 @@ mod tests {
     fn persists_paragraph_ranges_for_fast_chapter_opening() {
         let temp_dir = temp_store_dir();
         fs::create_dir_all(&temp_dir).expect("test store dir should be created");
-        let store =
-            SonelleStore::open_at(temp_dir.join("sonelle.sqlite3")).expect("store should initialize");
+        let store = SonelleStore::open_at(temp_dir.join("sonelle.sqlite3"))
+            .expect("store should initialize");
 
         let document = store
             .save_imported_book(ImportedBook {
                 id: "book-paragraphs".to_string(),
                 title: "Paragraph Book".to_string(),
                 author: "Test Author".to_string(),
-                cover_image_src: None,
+                language: None,
+                cover_image: None,
                 source_path: "/tmp/paragraphs.epub".to_string(),
                 chapters: vec![ImportedChapter {
                     id: "book-paragraphs:chapter-1".to_string(),
@@ -1595,11 +1708,10 @@ mod tests {
         assert_eq!(paragraph_count, 2);
         assert_eq!(document.chapters[0].paragraphs.len(), 2);
         assert_eq!(reopened.chapters[0].paragraphs.len(), 2);
-        assert_eq!(reopened.chapters[0].paragraphs[0].sentences.len(), 2);
-        assert_eq!(
-            reopened.chapters[0].paragraphs[1].sentences[0].text,
-            "Third sentence."
-        );
+        assert_eq!(reopened.chapters[0].paragraphs[0].start_sentence_index, 0);
+        assert_eq!(reopened.chapters[0].paragraphs[0].sentence_count, 2);
+        assert_eq!(reopened.chapters[0].paragraphs[1].start_sentence_index, 2);
+        assert_eq!(reopened.chapters[0].paragraphs[1].sentence_count, 1);
 
         fs::remove_dir_all(temp_dir).ok();
     }
@@ -1608,14 +1720,15 @@ mod tests {
     fn persists_bookmarks_searches_sentences_and_exports_book_data() {
         let temp_dir = temp_store_dir();
         fs::create_dir_all(&temp_dir).expect("test store dir should be created");
-        let store =
-            SonelleStore::open_at(temp_dir.join("sonelle.sqlite3")).expect("store should initialize");
+        let store = SonelleStore::open_at(temp_dir.join("sonelle.sqlite3"))
+            .expect("store should initialize");
         store
             .save_imported_book(ImportedBook {
                 id: "book-search".to_string(),
                 title: "Searchable Book".to_string(),
                 author: "Test Author".to_string(),
-                cover_image_src: None,
+                language: None,
+                cover_image: None,
                 source_path: "/tmp/search.epub".to_string(),
                 chapters: vec![ImportedChapter {
                     id: "book-search:chapter-1".to_string(),
@@ -1672,8 +1785,8 @@ mod tests {
     fn large_book_performance_harness_reports_reader_timings() {
         let temp_dir = temp_store_dir();
         fs::create_dir_all(&temp_dir).expect("performance store dir should be created");
-        let store =
-            SonelleStore::open_at(temp_dir.join("sonelle.sqlite3")).expect("store should initialize");
+        let store = SonelleStore::open_at(temp_dir.join("sonelle.sqlite3"))
+            .expect("store should initialize");
 
         measure_imported_book_performance(
             &store,
@@ -1713,8 +1826,8 @@ mod tests {
 
         let temp_dir = temp_store_dir();
         fs::create_dir_all(&temp_dir).expect("qa store dir should be created");
-        let store =
-            SonelleStore::open_at(temp_dir.join("sonelle.sqlite3")).expect("store should initialize");
+        let store = SonelleStore::open_at(temp_dir.join("sonelle.sqlite3"))
+            .expect("store should initialize");
 
         for epub_path in &epub_paths {
             let started_at = Instant::now();
@@ -1958,7 +2071,8 @@ mod tests {
             id: "synthetic-large-book".to_string(),
             title: "Synthetic Large Book".to_string(),
             author: "Sonelle QA".to_string(),
-            cover_image_src: None,
+            language: None,
+            cover_image: None,
             source_path: "synthetic://large-book".to_string(),
             chapters: (0..14)
                 .map(|chapter_index| {

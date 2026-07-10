@@ -1,6 +1,6 @@
 import { createSentenceId, normalizeReaderSearchText } from "@sonelle/reader";
 import { segmentParagraphs, segmentSentences } from "@sonelle/text";
-import type { ReaderDocumentDto, ReaderSentenceDto } from "./reader-document";
+import type { ReaderDocumentDto } from "./reader-document";
 import { fixtureBook, type FixtureBook } from "./fixture-book";
 
 export interface ReaderSentenceView {
@@ -31,6 +31,7 @@ export interface ReaderView {
     id: string;
     title: string;
     author: string;
+    language: string | null;
     coverImageSrc: string | null;
   };
   chapter: {
@@ -47,6 +48,32 @@ export interface ReaderView {
 export interface BuildReaderViewOptions {
   chapterId?: string;
   sentenceIndex?: number;
+}
+
+export function paragraphsInSentenceRange(
+  paragraphs: ReaderParagraphView[],
+  start: number,
+  end: number
+): ReaderParagraphView[] {
+  let low = 0;
+  let high = paragraphs.length;
+
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (paragraphs[middle].endSentenceIndex <= start) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+
+  const visible: ReaderParagraphView[] = [];
+  for (let index = low; index < paragraphs.length; index += 1) {
+    const paragraph = paragraphs[index];
+    if (paragraph.startSentenceIndex >= end) break;
+    visible.push(paragraph);
+  }
+  return visible;
 }
 
 export function buildFixtureReaderView(
@@ -68,6 +95,7 @@ export function buildFixtureReaderView(
         id: book.id,
         title: book.title,
         author: book.author,
+        language: "en",
         coverImageSrc: null
       },
       chapter: {
@@ -96,6 +124,7 @@ export function buildFixtureReaderView(
       id: book.id,
       title: book.title,
       author: book.author,
+      language: "en",
       coverImageSrc: null
     },
     chapter: {
@@ -129,6 +158,7 @@ export function buildReaderViewFromDocument(
       source: "library",
       book: {
         ...document.book,
+        language: document.book.language ?? null,
         coverImageSrc: document.book.coverImageSrc ?? null
       },
       chapter: {
@@ -154,6 +184,7 @@ export function buildReaderViewFromDocument(
     source: "library",
     book: {
       ...document.book,
+      language: document.book.language ?? null,
       coverImageSrc: document.book.coverImageSrc ?? null
     },
     chapter: {
@@ -213,16 +244,14 @@ function buildParagraphsFromDocument(
   sentences: ReaderSentenceView[]
 ): ReaderParagraphView[] {
   if (paragraphs != null && paragraphs.length > 0) {
-    const sentenceById = new Map(sentences.map((sentence) => [sentence.id, sentence]));
+    const sentenceByIndex = new Map(sentences.map((sentence) => [sentence.index, sentence]));
     const mappedParagraphs = paragraphs
       .map((paragraph) => ({
         id: paragraph.id,
         index: paragraph.index,
-        sentences: paragraph.sentences
-          .map(
-            (sentence) => sentenceById.get(sentence.id) ?? findSentenceByIndex(sentences, sentence)
-          )
-          .filter((sentence): sentence is ReaderSentenceView => sentence != null)
+        sentences: Array.from({ length: Math.max(0, paragraph.sentenceCount) }, (_, offset) =>
+          sentenceByIndex.get(paragraph.startSentenceIndex + offset)
+        ).filter((sentence): sentence is ReaderSentenceView => sentence != null)
       }))
       .map(withParagraphRange)
       .filter((paragraph) => paragraph.sentences.length > 0);
@@ -231,13 +260,6 @@ function buildParagraphsFromDocument(
   }
 
   return chunkSentencesIntoParagraphs(sentences);
-}
-
-function findSentenceByIndex(
-  sentences: ReaderSentenceView[],
-  sentence: ReaderSentenceDto
-): ReaderSentenceView | undefined {
-  return sentences.find((entry) => entry.index === sentence.index && entry.text === sentence.text);
 }
 
 function chunkSentencesIntoParagraphs(sentences: ReaderSentenceView[]): ReaderParagraphView[] {

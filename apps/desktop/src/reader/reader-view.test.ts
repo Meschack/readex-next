@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { tokenizeReaderText } from "@sonelle/text";
-import { buildFixtureReaderView, buildReaderViewFromDocument } from "./reader-view";
+import {
+  buildFixtureReaderView,
+  buildReaderViewFromDocument,
+  paragraphsInSentenceRange,
+  type ReaderParagraphView
+} from "./reader-view";
 
 describe("fixture reader view", () => {
   it("turns the fixture chapter into sentence views with word tokens", () => {
@@ -42,7 +47,15 @@ describe("fixture reader view", () => {
           title: "One",
           index: 0,
           sentenceCount: 1,
-          sentences: [{ id: "sentence-1", index: 0, text: "Hello reader." }]
+          sentences: [{ id: "sentence-1", index: 0, text: "Hello reader." }],
+          paragraphs: [
+            {
+              id: "paragraph-1",
+              index: 0,
+              startSentenceIndex: 0,
+              sentenceCount: 1
+            }
+          ]
         }
       ],
       position: {
@@ -71,6 +84,7 @@ describe("fixture reader view", () => {
       "reader",
       "."
     ]);
+    expect(reader.paragraphs[0]?.sentences[0]).toBe(reader.sentences[0]);
   });
 
   it("can open a requested chapter and sentence for bookmark navigation", () => {
@@ -193,5 +207,27 @@ describe("fixture reader view", () => {
       startSentenceIndex: 0,
       endSentenceIndex: 2
     });
+  });
+
+  it("locates visible paragraphs without scanning the whole chapter", () => {
+    const paragraphs = Array.from({ length: 1_000 }, (_, index) => {
+      const sentence = {
+        id: `sentence-${index}`,
+        index,
+        text: `Sentence ${index}.`,
+        searchText: `sentence ${index}.`
+      };
+      return {
+        id: `paragraph-${index}`,
+        index,
+        startSentenceIndex: index,
+        endSentenceIndex: index + 1,
+        sentences: [sentence]
+      } satisfies ReaderParagraphView;
+    });
+
+    expect(paragraphsInSentenceRange(paragraphs, 510, 514).map((item) => item.index)).toEqual([
+      510, 511, 512, 513
+    ]);
   });
 });

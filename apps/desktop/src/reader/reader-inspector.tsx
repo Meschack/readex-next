@@ -1,4 +1,4 @@
-import { For, Show, type JSX } from "solid-js";
+import { createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import {
   DEFAULT_AUDIO_SETTINGS,
   SUPPORTED_NARRATION_VOICES,
@@ -14,9 +14,12 @@ import type { InspectorTab } from "./reader-experience-types";
 import type { ReaderSentenceView } from "./reader-view";
 import {
   BookmarkIcon,
+  CheckIcon,
+  ChevronDownIcon,
   HeadphonesIcon,
   SearchIcon,
   SettingsIcon,
+  SpeakerIcon,
   TrashIcon,
   WordIcon
 } from "./reader-icons";
@@ -29,6 +32,7 @@ interface ReaderInspectorProps {
   readerSearchResults: ReaderSearchResult<ReaderSentenceView>[];
   bookmarks: LibraryBookmarkDto[];
   activeBookmark: LibraryBookmarkDto | null;
+  activeSentence: ReaderSentenceView | null;
   bookmarkNotice: string | null;
   audioSettings: AudioSettings;
   readerContentFontSize: number;
@@ -104,6 +108,7 @@ export function ReaderInspector(props: ReaderInspectorProps) {
           <BookmarkPanel
             bookmarks={props.bookmarks}
             activeBookmark={props.activeBookmark}
+            activeSentence={props.activeSentence}
             notice={props.bookmarkNotice}
             onToggleActive={props.onToggleBookmark}
             onOpenBookmark={props.onOpenBookmark}
@@ -281,6 +286,7 @@ function SearchPanel(props: SearchPanelProps) {
 interface BookmarkPanelProps {
   bookmarks: LibraryBookmarkDto[];
   activeBookmark: LibraryBookmarkDto | null;
+  activeSentence: ReaderSentenceView | null;
   notice: string | null;
   onToggleActive: () => void;
   onOpenBookmark: (bookmark: LibraryBookmarkDto) => void;
@@ -290,11 +296,23 @@ interface BookmarkPanelProps {
 function BookmarkPanel(props: BookmarkPanelProps) {
   return (
     <section class="inspector-panel bookmark-panel" aria-label="Bookmarks">
+      <Show when={props.activeSentence}>
+        {(sentence) => (
+          <section class="current-sentence-card" aria-label="Current sentence">
+            <span class="inspector-section-title">Current sentence</span>
+            <blockquote>{sentence().text}</blockquote>
+            <button
+              classList={{ "current-passage-action": true, saved: props.activeBookmark != null }}
+              type="button"
+              onClick={props.onToggleActive}
+            >
+              {props.activeBookmark == null ? "Save passage" : "Remove passage"}
+            </button>
+          </section>
+        )}
+      </Show>
       <div class="panel-title-row">
         <strong>Saved Passages ({props.bookmarks.length})</strong>
-        <button type="button" onClick={props.onToggleActive}>
-          {props.activeBookmark == null ? "Save current" : "Remove current"}
-        </button>
       </div>
       <Show when={props.notice}>{(notice) => <p class="library-notice">{notice()}</p>}</Show>
       <Show
@@ -348,32 +366,12 @@ interface SettingsPanelProps {
 }
 
 function SettingsPanel(props: SettingsPanelProps) {
-  const speedOptions = [0.75, 0.9, 1, 1.25, 1.5];
-  const voiceDescription = (voiceId: string) => {
-    if (voiceId.includes("en_US")) return "Soft, narrative American accent";
-    if (voiceId.includes("en_GB")) return "Deep, scholarly British accent";
-
-    return "Standard synthesized voice";
-  };
-
   return (
     <section class="inspector-panel settings-panel" aria-label="Settings">
-      <label class="setting-field">
-        <span class="inspector-section-title">Narration speed</span>
-        <select
-          aria-label="Narration speed"
-          value={props.audioSettings.playbackRate.toString()}
-          onChange={(event) =>
-            props.onAudioSettingsChange({ playbackRate: Number(event.currentTarget.value) })
-          }
-        >
-          <For each={speedOptions}>
-            {(speed) => (
-              <option value={speed.toString()}>{speed.toFixed(speed % 1 === 0 ? 1 : 2)}x</option>
-            )}
-          </For>
-        </select>
-      </label>
+      <SpeedSelect
+        value={props.audioSettings.playbackRate}
+        onChange={(playbackRate) => props.onAudioSettingsChange({ playbackRate })}
+      />
       <div class="settings-action-row">
         <button class="secondary-tool-button" type="button" onClick={props.onResetAudioSettings}>
           Reset audio settings
@@ -409,24 +407,10 @@ function SettingsPanel(props: SettingsPanelProps) {
           }
         />
       </label>
-      <span class="inspector-section-title">Voice selection</span>
-      <div class="voice-list" role="group" aria-label="Voice selection">
-        <For each={SUPPORTED_NARRATION_VOICES}>
-          {(voice) => (
-            <button
-              classList={{ active: props.audioSettings.voiceId === voice.id }}
-              type="button"
-              onClick={() => props.onAudioSettingsChange({ voiceId: voice.id })}
-            >
-              <span aria-hidden="true">
-                <HeadphonesIcon />
-              </span>
-              <strong>{voice.label}</strong>
-              <small>{voiceDescription(voice.id)}</small>
-            </button>
-          )}
-        </For>
-      </div>
+      <VoiceSelect
+        voiceId={props.audioSettings.voiceId}
+        onChange={(voiceId) => props.onAudioSettingsChange({ voiceId })}
+      />
       <div class="tool-card">
         <span class="inspector-section-title">Prepared audio</span>
         <p>
@@ -456,6 +440,262 @@ function SettingsPanel(props: SettingsPanelProps) {
         </Show>
       </div>
     </section>
+  );
+}
+
+function voiceDescription(voiceId: string) {
+  if (voiceId.includes("en_US")) return "Soft, narrative American accent";
+  if (voiceId.includes("northern")) return "Warm northern British accent";
+  if (voiceId.includes("en_GB")) return "Deep, scholarly British accent";
+  if (voiceId.includes("fr_FR")) return "Natural French narration";
+
+  return "Clear, natural narration";
+}
+
+interface EnhancedSelectOption {
+  id: string;
+  label: string;
+  description: string;
+  meta: string;
+}
+
+interface EnhancedSelectProps {
+  label: string;
+  ariaLabel: string;
+  value: string;
+  options: readonly EnhancedSelectOption[];
+  triggerMeta: string;
+  icon: () => JSX.Element;
+  onChange: (value: string) => void;
+}
+
+const narrationSpeedOptions: readonly EnhancedSelectOption[] = [
+  {
+    id: "0.75",
+    label: "0.75x",
+    description: "Slow and spacious",
+    meta: "Gentle pace"
+  },
+  {
+    id: "0.9",
+    label: "0.90x",
+    description: "Relaxed and clear",
+    meta: "Recommended"
+  },
+  {
+    id: "1",
+    label: "1.0x",
+    description: "Natural reading pace",
+    meta: "Balanced"
+  },
+  {
+    id: "1.25",
+    label: "1.25x",
+    description: "Brisk but comfortable",
+    meta: "Faster pace"
+  },
+  {
+    id: "1.5",
+    label: "1.5x",
+    description: "Fast review pace",
+    meta: "Quick listen"
+  }
+];
+
+function VoiceSelect(props: { voiceId: string; onChange: (voiceId: string) => void }) {
+  const options = () =>
+    SUPPORTED_NARRATION_VOICES.map((voice) => ({
+      id: voice.id,
+      label: voice.label,
+      description: voiceDescription(voice.id),
+      meta: voice.locale
+    }));
+
+  return (
+    <EnhancedSelect
+      label="Voice selection"
+      ariaLabel="Narration voice"
+      value={props.voiceId}
+      options={options()}
+      triggerMeta="Local narration"
+      icon={HeadphonesIcon}
+      onChange={props.onChange}
+    />
+  );
+}
+
+function SpeedSelect(props: { value: number; onChange: (value: number) => void }) {
+  return (
+    <EnhancedSelect
+      label="Narration speed"
+      ariaLabel="Narration speed"
+      value={props.value.toString()}
+      options={narrationSpeedOptions}
+      triggerMeta="Playback speed"
+      icon={SpeakerIcon}
+      onChange={(value) => props.onChange(Number(value))}
+    />
+  );
+}
+
+function EnhancedSelect(props: EnhancedSelectProps) {
+  const [isOpen, setIsOpen] = createSignal(false);
+  const [highlightedIndex, setHighlightedIndex] = createSignal(0);
+  let root: HTMLDivElement | undefined;
+  const Icon = props.icon;
+
+  const selectId = props.label.toLowerCase().replace(/[^a-z0-9]+/gu, "-");
+  const optionsId = `${selectId}-options`;
+  const selectedOption = () =>
+    props.options.find((option) => option.id === props.value) ?? props.options[0];
+  const selectedIndex = () =>
+    Math.max(
+      0,
+      props.options.findIndex((option) => option.id === selectedOption().id)
+    );
+  const highlightedOption = () => props.options[highlightedIndex()] ?? selectedOption();
+
+  const openMenu = () => {
+    setHighlightedIndex(selectedIndex());
+    setIsOpen(true);
+  };
+
+  const closeMenu = () => setIsOpen(false);
+
+  const moveHighlight = (direction: -1 | 1) => {
+    setHighlightedIndex((current) => {
+      const next = current + direction;
+      if (next < 0) return props.options.length - 1;
+      if (next >= props.options.length) return 0;
+      return next;
+    });
+  };
+
+  const handleKeyDown = (event: KeyboardEvent) => {
+    if (event.key === "Tab") {
+      closeMenu();
+      return;
+    }
+
+    if (event.key === "Escape") {
+      if (!isOpen()) return;
+      event.preventDefault();
+      closeMenu();
+      return;
+    }
+
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!isOpen()) {
+        openMenu();
+        return;
+      }
+      moveHighlight(event.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+
+    if (event.key === "Home" || event.key === "End") {
+      if (!isOpen()) return;
+      event.preventDefault();
+      setHighlightedIndex(event.key === "Home" ? 0 : props.options.length - 1);
+      return;
+    }
+
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      if (!isOpen()) {
+        openMenu();
+        return;
+      }
+      props.onChange(highlightedOption().id);
+      closeMenu();
+    }
+  };
+
+  onMount(() => {
+    const handlePointerDown = (event: PointerEvent) => {
+      if (root != null && !root.contains(event.target as Node)) closeMenu();
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    onCleanup(() => document.removeEventListener("pointerdown", handlePointerDown));
+  });
+
+  return (
+    <div class="enhanced-select" ref={(element) => (root = element)}>
+      <span class="inspector-section-title">{props.label}</span>
+      <button
+        class="enhanced-select-trigger"
+        type="button"
+        aria-controls={optionsId}
+        aria-expanded={isOpen()}
+        aria-haspopup="listbox"
+        aria-label={props.ariaLabel}
+        aria-activedescendant={isOpen() ? `${optionsId}-option-${highlightedIndex()}` : undefined}
+        onClick={() => (isOpen() ? closeMenu() : openMenu())}
+        onKeyDown={handleKeyDown}
+      >
+        <span class="enhanced-select-icon" aria-hidden="true">
+          <Icon />
+        </span>
+        <span class="enhanced-select-copy">
+          <strong>{selectedOption().label}</strong>
+          <small>{selectedOption().description}</small>
+          <span class="enhanced-select-meta">
+            <span class="enhanced-select-badge">{selectedOption().meta}</span>
+            <span>{props.triggerMeta}</span>
+          </span>
+        </span>
+        <span class="enhanced-select-chevron" aria-hidden="true">
+          <ChevronDownIcon />
+        </span>
+      </button>
+      <Show when={isOpen()}>
+        <div
+          id={optionsId}
+          class="enhanced-select-options"
+          role="listbox"
+          aria-label={`Available ${props.label.toLowerCase()} options`}
+        >
+          <For each={props.options}>
+            {(option, index) => (
+              <button
+                id={`${optionsId}-option-${index()}`}
+                classList={{
+                  "enhanced-select-option": true,
+                  active: props.value === option.id,
+                  highlighted: highlightedIndex() === index()
+                }}
+                type="button"
+                role="option"
+                aria-selected={props.value === option.id}
+                onMouseEnter={() => setHighlightedIndex(index())}
+                onClick={() => {
+                  props.onChange(option.id);
+                  closeMenu();
+                }}
+              >
+                <span class="enhanced-select-icon" aria-hidden="true">
+                  <Icon />
+                </span>
+                <span class="enhanced-select-option-copy">
+                  <strong>{option.label}</strong>
+                  <small>{option.description}</small>
+                  <span class="enhanced-select-meta">
+                    <span class="enhanced-select-badge">{option.meta}</span>
+                  </span>
+                </span>
+                <Show when={props.value === option.id}>
+                  <span class="enhanced-select-check" aria-label="Selected">
+                    <CheckIcon />
+                  </span>
+                </Show>
+              </button>
+            )}
+          </For>
+        </div>
+      </Show>
+    </div>
   );
 }
 

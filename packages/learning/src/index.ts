@@ -71,6 +71,28 @@ interface DictionaryApiPhonetic {
   audio?: unknown;
 }
 
+interface FreeDictionaryApiResponse {
+  word?: unknown;
+  entries?: unknown;
+  source?: unknown;
+}
+
+interface FreeDictionaryApiEntry {
+  language?: unknown;
+  partOfSpeech?: unknown;
+  pronunciations?: unknown;
+  senses?: unknown;
+  synonyms?: unknown;
+  antonyms?: unknown;
+}
+
+interface FreeDictionaryApiSense {
+  definition?: unknown;
+  examples?: unknown;
+  synonyms?: unknown;
+  antonyms?: unknown;
+}
+
 export function createSavedDictionary(
   entries: Record<string, SavedDictionaryEntry> = {}
 ): SavedDictionary {
@@ -188,6 +210,33 @@ export function parseDictionaryApiResponse(
   return firstWithDefinitions ?? null;
 }
 
+export function parseFreeDictionaryApiResponse(
+  surface: string,
+  payload: unknown,
+  preferredLanguage?: string,
+  fetchedAt = new Date().toISOString()
+): DictionaryEntry | null {
+  if (payload == null || typeof payload !== "object") return null;
+
+  const response = payload as FreeDictionaryApiResponse;
+  const sourceUrl =
+    response.source != null && typeof response.source === "object"
+      ? (readString((response.source as { url?: unknown }).url) ?? "")
+      : "";
+  const language = normalizeLanguageCode(preferredLanguage);
+  const entries = readArray(response.entries)
+    .map((item) => parseFreeApiEntry(surface, response.word, sourceUrl, item, fetchedAt))
+    .filter((entry): entry is ParsedFreeDictionaryEntry => entry != null);
+  const languageEntries = language
+    ? entries.filter((entry) => entry.languageCode === language)
+    : entries;
+  const firstWithDefinitions = (languageEntries.length > 0 ? languageEntries : entries).find(
+    (entry) => entry.entry.meanings.length > 0
+  );
+
+  return firstWithDefinitions?.entry ?? null;
+}
+
 export function serializeSavedDictionary(savedDictionary: SavedDictionary): string {
   return JSON.stringify({ entries: savedDictionary.entries });
 }
@@ -249,6 +298,83 @@ function parseApiEntry(surface: string, item: unknown, fetchedAt: string): Dicti
     sourceUrl: readArray(apiEntry.sourceUrls).map(readString).find(Boolean) ?? "",
     fetchedAt
   };
+}
+
+interface ParsedFreeDictionaryEntry {
+  entry: DictionaryEntry;
+  languageCode: string | null;
+}
+
+function parseFreeApiEntry(
+  surface: string,
+  responseWord: unknown,
+  sourceUrl: string,
+  item: unknown,
+  fetchedAt: string
+): ParsedFreeDictionaryEntry | null {
+  if (item == null || typeof item !== "object") return null;
+
+  const apiEntry = item as FreeDictionaryApiEntry;
+  const key = normalizeInsightKey(surface);
+  if (key.length === 0) return null;
+
+  const partOfSpeech = readString(apiEntry.partOfSpeech) ?? "unknown";
+  const meanings = readArray(apiEntry.senses)
+    .map((sense) => parseFreeMeaning(sense, partOfSpeech))
+    .filter((meaning): meaning is DictionaryMeaning => meaning != null);
+  const pronunciations = readArray(apiEntry.pronunciations);
+  const phonetic = pronunciations
+    .map((pronunciation) => {
+      if (pronunciation == null || typeof pronunciation !== "object") return null;
+      return readString((pronunciation as { text?: unknown }).text);
+    })
+    .find((text): text is string => text != null);
+
+  return {
+    entry: {
+      key,
+      surface,
+      word: readString(responseWord) ?? surface,
+      phonetic: phonetic ?? null,
+      audioUrl: null,
+      meanings,
+      sourceUrl,
+      fetchedAt
+    },
+    languageCode: readLanguageCode(apiEntry.language)
+  };
+}
+
+function parseFreeMeaning(item: unknown, partOfSpeech: string): DictionaryMeaning | null {
+  if (item == null || typeof item !== "object") return null;
+
+  const sense = item as FreeDictionaryApiSense;
+  const definition = readString(sense.definition);
+  if (definition == null) return null;
+
+  return {
+    partOfSpeech,
+    definitions: [
+      {
+        definition,
+        example: readArray(sense.examples).map(readString).find(Boolean) ?? null,
+        synonyms: readStringArray(sense.synonyms),
+        antonyms: readStringArray(sense.antonyms)
+      }
+    ]
+  };
+}
+
+function normalizeLanguageCode(value: string | undefined): string | null {
+  if (value == null) return null;
+  const code = value.trim().toLocaleLowerCase().split(/[-_]/u)[0];
+  return code.length > 0 ? code : null;
+}
+
+function readLanguageCode(value: unknown): string | null {
+  if (typeof value === "string") return normalizeLanguageCode(value);
+  if (value == null || typeof value !== "object") return null;
+  return normalizeLanguageCode(readString((value as { code?: unknown }).code) ?? undefined);
 }
 
 function parseMeaning(item: unknown): DictionaryMeaning | null {

@@ -11,6 +11,7 @@ import {
 import {
   createAudioSettings,
   createPrefetchingNarrationGateway,
+  resolveNarrationVoiceForLanguage,
   type AudioSettings,
   type SentenceNarration,
   type SentenceNarrationRequest
@@ -61,20 +62,28 @@ import {
   type AudioCacheStatsDto
 } from "../audio/audio-cache-repository";
 import { createAudioSettingsRepository } from "../audio/audio-settings-repository";
-import { createNarrationRepository, toFriendlyNarrationError } from "../audio/narration-repository";
+import {
+  createNarrationRepository,
+  reportNarrationDevelopmentError,
+  toFriendlyNarrationError
+} from "../audio/narration-repository";
+import { createPlayableAudioSource } from "../audio/playable-audio-source";
 import { createDictionaryRepository } from "../learning/dictionary-repository";
 import {
   createBookRepository,
+  listenForBookDrops,
+  resolveDroppedEpubPath,
   toFriendlyLibraryError,
+  type BookDropEvent,
   type LibraryBookmarkDto,
   type LibrarySearchResultDto,
   type SaveReadingPositionInput
 } from "../library/book-repository";
-import { ChapterNavigator, PlaybackRail, ReaderTopAppBar } from "./reader-chrome";
+import { ChapterNavigator, PlaybackRail, ProductBar, ReaderTopAppBar } from "./reader-chrome";
 import { nextReaderChapter } from "./reader-chapter-flow";
 import { ReaderParagraph } from "./reader-content";
 import { createSampleExport, downloadJson } from "./reader-export";
-import type { LibraryBookSummary } from "./reader-document";
+import type { LibraryBookSummary, ReaderDocumentDto } from "./reader-document";
 import type {
   AppView,
   InspectorTab,
@@ -83,6 +92,13 @@ import type {
 } from "./reader-experience-types";
 import { isTypingTarget, slugify } from "./reader-formatting";
 import { ReaderInspector } from "./reader-inspector";
+import {
+  clampSidebarWidth,
+  getSidebarResizeBounds,
+  sidebarDefaultWidths,
+  SidebarResizeHandle,
+  type ResizableSidebar
+} from "./sidebar-resize";
 import {
   createLibraryRailMode,
   transitionLibraryRailMode,
@@ -93,16 +109,18 @@ import { LibraryRail, LibraryWorkspace } from "./library-surfaces";
 import {
   buildFixtureReaderView,
   buildReaderViewFromDocument,
+  paragraphsInSentenceRange,
   type ReaderSentenceView,
   type ReaderView
 } from "./reader-view";
 import { createReaderPreferencesRepository } from "./reader-preferences-repository";
 
-const renderedSentenceLead = 36;
-const renderedSentenceTrail = 96;
+const renderedSentenceLead = 24;
+const renderedSentenceTrail = 48;
 const librarySearchDelayMs = 180;
 const playbackPositionSaveDelayMs = 2_500;
 const chapterTransitionDelayMs = 5_000;
+const narrationPlaybackFailureMessage = "We couldn't play this narration. Please try again.";
 
 type PositionSaveIntent = "immediate" | "playback";
 
@@ -133,6 +151,8 @@ export function ReaderExperience() {
   const [readerContentFontSize, setReaderContentFontSize] = createSignal(
     readerPreferences.contentFontSize
   );
+  const [libraryRailWidth, setLibraryRailWidth] = createSignal(sidebarDefaultWidths.library);
+  const [inspectorRailWidth, setInspectorRailWidth] = createSignal(sidebarDefaultWidths.inspector);
   const [activeView, setActiveView] = createSignal<AppView>("reader");
   const [libraryRailMode, setLibraryRailMode] = createSignal(
     createLibraryRailMode(sampleReader.book.id)
@@ -140,6 +160,7 @@ export function ReaderExperience() {
   const [isLibraryLoading, setIsLibraryLoading] = createSignal(false);
   const [isLibrarySearching, setIsLibrarySearching] = createSignal(false);
   const [isImporting, setIsImporting] = createSignal(false);
+  const [isLibraryDropTarget, setIsLibraryDropTarget] = createSignal(false);
   const [playback, setPlayback] = createSignal(createPlaybackState());
   const [activeNarration, setActiveNarration] = createSignal<SentenceNarration | null>(null);
   const [isPreparingNarration, setIsPreparingNarration] = createSignal(false);
@@ -165,6 +186,7 @@ export function ReaderExperience() {
   });
 
   let activeHtmlAudio: HTMLAudioElement | null = null;
+  let finishActiveHtmlAudio: (() => void) | null = null;
   let narrationRun = 0;
   let chapterTransitionRun = 0;
   let librarySearchRun = 0;
@@ -190,10 +212,7 @@ export function ReaderExperience() {
   const visibleParagraphs = createMemo(() => {
     const range = visibleSentenceRange();
 
-    return reader().paragraphs.filter(
-      (paragraph) =>
-        paragraph.endSentenceIndex > range.start && paragraph.startSentenceIndex < range.end
-    );
+    return paragraphsInSentenceRange(reader().paragraphs, range.start, range.end);
   });
   const readerProgressIndex = createMemo(() => createReaderProgressIndex(reader().chapters));
   const readerProgress = createMemo(() =>
@@ -269,13 +288,41 @@ export function ReaderExperience() {
     return reader().source === "sample" ? "Sample narration" : "Ready to listen";
   });
 
+  const getSidebarBounds = (sidebar: ResizableSidebar) =>
+    getSidebarResizeBounds({
+      sidebar,
+      viewportWidth: window.innerWidth,
+      oppositeSidebarWidth: sidebar === "library" ? inspectorRailWidth() : libraryRailWidth()
+    });
+
+  const clampSidebarWidthsToViewport = () => {
+    setLibraryRailWidth((width) => clampSidebarWidth(width, getSidebarBounds("library")));
+    setInspectorRailWidth((width) => clampSidebarWidth(width, getSidebarBounds("inspector")));
+  };
+
   onMount(() => {
+    let disposed = false;
+    let unlistenBookDrops: (() => void) | undefined;
     void refreshLibrary();
     void refreshAllBookmarks();
     void refreshAudioCacheStats();
+    clampSidebarWidthsToViewport();
+    void listenForBookDrops(handleBookDropEvent).then((unlisten) => {
+      if (disposed) {
+        unlisten();
+      } else {
+        unlistenBookDrops = unlisten;
+      }
+    });
 
     window.addEventListener("keydown", handleShortcut);
-    onCleanup(() => window.removeEventListener("keydown", handleShortcut));
+    window.addEventListener("resize", clampSidebarWidthsToViewport);
+    onCleanup(() => {
+      disposed = true;
+      window.removeEventListener("keydown", handleShortcut);
+      window.removeEventListener("resize", clampSidebarWidthsToViewport);
+      unlistenBookDrops?.();
+    });
   });
   onCleanup(() => readingPositionScheduler.flush());
 
@@ -357,9 +404,17 @@ export function ReaderExperience() {
     onCleanup(() => {
       narrationRun += 1;
       setIsPreparingNarration(false);
-      activeHtmlAudio?.pause();
-      activeHtmlAudio = null;
-      void narrationRepository.stopPreparedSentenceAudio().catch(() => undefined);
+      stopActiveHtmlAudio();
+      if (activeNarration()?.playbackMode === "native-speech") {
+        void narrationRepository.stopPreparedSentenceAudio().catch((error) => {
+          reportNarrationDevelopmentError(error, {
+            stage: "stop",
+            sentenceId: request.sentenceId,
+            voiceId: request.voiceId,
+            playbackMode: "native-speech"
+          });
+        });
+      }
     });
   });
 
@@ -503,7 +558,7 @@ export function ReaderExperience() {
     }));
 
     try {
-      const entry = await dictionaryRepository.lookupWord(surface);
+      const entry = await dictionaryRepository.lookupWord(surface, reader().book.language);
       setDictionaryLookups((current) => ({
         ...current,
         [key]: entry == null ? dictionaryLookupNotFound(surface) : dictionaryLookupReady(entry)
@@ -535,8 +590,7 @@ export function ReaderExperience() {
     const nextAudioSettings = createAudioSettings({ ...currentSettings, ...nextSettings });
 
     if (nextAudioSettings.voiceId !== currentSettings.voiceId) {
-      activeHtmlAudio?.pause();
-      activeHtmlAudio = null;
+      stopActiveHtmlAudio();
       narrationRepository.clearPrefetchedNarrations();
       setActiveNarration(null);
       setNarrationNotice(null);
@@ -587,10 +641,31 @@ export function ReaderExperience() {
     sentenceIndex = nextReader.initialSentenceIndex,
     playbackStatus: PlaybackStatus = "idle"
   ) => {
+    const previousReader = reader();
+    const currentAudioSettings = audioSettings();
+    const switchingBooks =
+      nextReader.book.id !== previousReader.book.id || nextReader.source !== previousReader.source;
+    const nextVoiceId = switchingBooks
+      ? resolveNarrationVoiceForLanguage(nextReader.book.language, currentAudioSettings.voiceId)
+      : currentAudioSettings.voiceId;
+    const nextAudioSettings = createAudioSettings({
+      ...currentAudioSettings,
+      voiceId: nextVoiceId
+    });
+
     readingPositionScheduler.flush();
     nextPositionSaveIntent = "immediate";
     sentenceElements.clear();
+
+    if (nextAudioSettings.voiceId !== currentAudioSettings.voiceId) {
+      stopActiveHtmlAudio();
+      narrationRepository.clearPrefetchedNarrations();
+    }
+
     batch(() => {
+      if (nextAudioSettings.voiceId !== currentAudioSettings.voiceId) {
+        setAudioSettings(nextAudioSettings);
+      }
       setReader(nextReader);
       setPlayback(() =>
         selectPlaybackSentence(
@@ -613,23 +688,35 @@ export function ReaderExperience() {
     currentReader: ReaderView,
     activeSentenceIndex: number
   ) => {
+    let failureStage: "prepare" | "playback" = "prepare";
+
     try {
       const narration = await narrationRepository.prepareSentenceAudio(request);
       if (runId !== narrationRun) return;
 
       setActiveNarration(narration);
       setIsPreparingNarration(false);
-      if (!narration.cached) void refreshAudioCacheStats();
 
       if (narration.readiness !== "ready") {
-        setNarrationNotice(narration.message ?? "Narration needs attention.");
+        const message = narration.message ?? "Narration needs attention.";
+        reportNarrationDevelopmentError(message, {
+          stage: "prepare",
+          sentenceId: request.sentenceId,
+          voiceId: request.voiceId,
+          playbackMode: narration.playbackMode
+        });
+        setNarrationNotice(message);
         setPlayback((current) => pausePlayback(current));
         return;
       }
 
-      prefetchNextSentenceNarration(currentReader, activeSentenceIndex, runId);
+      failureStage = "playback";
+      prefetchNextSentenceNarration(currentReader, activeSentenceIndex);
 
-      if (narration.playbackMode === "html-audio" && narration.sourceUrl != null) {
+      if (narration.playbackMode === "html-audio") {
+        if (narration.sourceUrl == null) {
+          throw new Error("Ready HTML narration did not include an audio source URL.");
+        }
         await playHtmlAudio(narration.sourceUrl, runId);
       } else {
         await narrationRepository.playPreparedSentenceAudio(request, narration);
@@ -643,36 +730,74 @@ export function ReaderExperience() {
     } catch (error) {
       if (runId !== narrationRun) return;
 
+      reportNarrationDevelopmentError(error, {
+        stage: failureStage,
+        sentenceId: request.sentenceId,
+        voiceId: request.voiceId,
+        playbackMode: activeNarration()?.playbackMode ?? null
+      });
       setIsPreparingNarration(false);
-      setNarrationNotice(toFriendlyNarrationError(error));
+      setNarrationNotice(
+        failureStage === "prepare"
+          ? toFriendlyNarrationError(error)
+          : narrationPlaybackFailureMessage
+      );
       setPlayback((current) => pausePlayback(current));
     }
   };
 
-  const playHtmlAudio = (sourceUrl: string, runId: number): Promise<void> =>
-    new Promise((resolve, reject) => {
-      activeHtmlAudio?.pause();
+  const playHtmlAudio = async (sourceUrl: string, runId: number): Promise<void> => {
+    stopActiveHtmlAudio();
 
-      const audio = new Audio(sourceUrl);
+    const playableSource = await createPlayableAudioSource(sourceUrl);
+    if (runId !== narrationRun) {
+      playableSource.dispose();
+      return;
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const audio = new Audio(playableSource.url);
       let settled = false;
+      const cleanUp = () => {
+        audio.onended = null;
+        audio.onpause = null;
+        audio.onerror = null;
+        playableSource.dispose();
+        if (activeHtmlAudio === audio) {
+          activeHtmlAudio = null;
+          finishActiveHtmlAudio = null;
+        }
+      };
       const finish = () => {
         if (settled) return;
         settled = true;
+        cleanUp();
         resolve();
       };
       const fail = (error: unknown) => {
         if (settled) return;
         settled = true;
+        cleanUp();
         reject(error);
       };
 
       activeHtmlAudio = audio;
+      finishActiveHtmlAudio = finish;
       audio.playbackRate = audioSettings().playbackRate;
       audio.onended = finish;
       audio.onpause = () => {
         if (runId !== narrationRun) finish();
       };
-      audio.onerror = () => fail(new Error("Narration needs attention. Please try again."));
+      audio.onerror = () => {
+        const mediaError = audio.error;
+        fail(
+          new Error(
+            mediaError == null
+              ? "HTML audio emitted an unknown playback error."
+              : `HTML audio failed with code ${mediaError.code}: ${mediaError.message || "No media error message."}`
+          )
+        );
+      };
       audio.play().catch(fail);
 
       if (runId !== narrationRun) {
@@ -680,11 +805,20 @@ export function ReaderExperience() {
         finish();
       }
     });
+  };
+
+  function stopActiveHtmlAudio() {
+    const audio = activeHtmlAudio;
+    const finish = finishActiveHtmlAudio;
+    activeHtmlAudio = null;
+    finishActiveHtmlAudio = null;
+    audio?.pause();
+    finish?.();
+  }
 
   const prefetchNextSentenceNarration = (
     currentReader: ReaderView,
-    activeSentenceIndex: number,
-    runId: number
+    activeSentenceIndex: number
   ) => {
     const nextSentence = currentReader.sentences[activeSentenceIndex + 1];
     if (nextSentence == null) return;
@@ -695,12 +829,13 @@ export function ReaderExperience() {
       audioSettings().voiceId
     );
 
-    void narrationRepository
-      .prefetchSentenceAudio(request)
-      .then(() => {
-        if (runId === narrationRun) void refreshAudioCacheStats();
-      })
-      .catch(() => undefined);
+    void narrationRepository.prefetchSentenceAudio(request).catch((error) => {
+      reportNarrationDevelopmentError(error, {
+        stage: "prefetch",
+        sentenceId: request.sentenceId,
+        voiceId: request.voiceId
+      });
+    });
   };
 
   const refreshLibrary = async () => {
@@ -828,10 +963,47 @@ export function ReaderExperience() {
       setActiveView("reader");
       sendLibraryRailEvent({ type: "reader-opened", bookId: nextReader.book.id });
       setLibraryNotice(null);
-      await refreshBookmarks(bookId);
     } catch (error) {
       setLibraryNotice(toFriendlyLibraryError(error));
     }
+  };
+
+  const handleBookDropEvent = (event: BookDropEvent) => {
+    if (activeView() !== "library") return;
+
+    if (event.type === "leave") {
+      setIsLibraryDropTarget(false);
+      return;
+    }
+
+    if (event.type === "enter" || event.type === "over") {
+      setIsLibraryDropTarget(true);
+      return;
+    }
+
+    setIsLibraryDropTarget(false);
+    const path = resolveDroppedEpubPath(event.paths);
+    if (path == null) {
+      setLibraryNotice("Drop an EPUB file to add it to your library.");
+      return;
+    }
+
+    void importBookFromPath(path);
+  };
+
+  const handleBrowserDrop = (files: File[]) => {
+    setIsLibraryDropTarget(false);
+    const paths = files
+      .map((file) => (file as File & { path?: unknown }).path)
+      .filter((value): value is string => typeof value === "string");
+    const path = resolveDroppedEpubPath(paths);
+
+    if (path == null) {
+      setLibraryNotice("Drop an EPUB file into the desktop app to add it to your library.");
+      return;
+    }
+
+    void importBookFromPath(path);
   };
 
   const importBook = async () => {
@@ -845,18 +1017,40 @@ export function ReaderExperience() {
       const document = await repository.importBookFromDialog();
       if (document == null) return;
 
-      const nextReader = buildReaderViewFromDocument(document);
-      const importOutcome = existingBookIds.has(nextReader.book.id) ? "reopened" : "added";
-      activateReader(nextReader);
-      setActiveView("reader");
-      setLibraryNotice(libraryImportNotice(importOutcome));
-      setLibraryBooks(await repository.listBooks());
-      await refreshBookmarks(nextReader.book.id);
+      await finishImportedBook(document, existingBookIds);
     } catch (error) {
       setLibraryNotice(toFriendlyLibraryError(error));
     } finally {
       setIsImporting(false);
     }
+  };
+
+  const importBookFromPath = async (path: string) => {
+    if (isImporting()) return;
+
+    const existingBookIds = new Set(libraryBooks().map((book) => book.id));
+    setIsImporting(true);
+    setLibraryNotice(null);
+
+    try {
+      const document = await repository.importBookFromPath(path);
+      await finishImportedBook(document, existingBookIds);
+    } catch (error) {
+      setLibraryNotice(toFriendlyLibraryError(error));
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const finishImportedBook = async (document: ReaderDocumentDto, existingBookIds: Set<string>) => {
+    const nextReader = buildReaderViewFromDocument(document);
+    const importOutcome = existingBookIds.has(nextReader.book.id) ? "reopened" : "added";
+    activateReader(nextReader);
+    setActiveView("reader");
+    sendLibraryRailEvent({ type: "reader-opened", bookId: nextReader.book.id });
+    setLibraryNotice(libraryImportNotice(importOutcome));
+    setLibraryBooks(await repository.listBooks());
+    await refreshBookmarks(nextReader.book.id);
   };
 
   const toggleActiveBookmark = async () => {
@@ -965,7 +1159,14 @@ export function ReaderExperience() {
   };
 
   return (
-    <main class="sonelle-shell">
+    <main
+      class="sonelle-shell"
+      style={{
+        "--library-rail-width": `${libraryRailWidth()}px`,
+        "--inspector-rail-width": `${inspectorRailWidth()}px`
+      }}
+    >
+      <ProductBar />
       <LibraryRail
         mode={libraryRailMode()}
         activeView={activeView()}
@@ -994,6 +1195,14 @@ export function ReaderExperience() {
         onOpenChapter={openChapter}
         onReturnToLibrary={() => openAppView("library")}
       />
+      <SidebarResizeHandle
+        sidebar="library"
+        edge="right"
+        width={libraryRailWidth()}
+        defaultWidth={sidebarDefaultWidths.library}
+        getBounds={() => getSidebarBounds("library")}
+        onWidthChange={setLibraryRailWidth}
+      />
 
       <Show
         when={activeView() === "reader"}
@@ -1005,10 +1214,14 @@ export function ReaderExperience() {
             query={libraryQuery()}
             filter={libraryFilter()}
             importing={isImporting()}
+            dropActive={isLibraryDropTarget()}
             notice={libraryNotice()}
             onQueryChange={setLibraryQuery}
             onFilterChange={setLibraryFilter}
             onImport={importBook}
+            onDragEnter={() => setIsLibraryDropTarget(true)}
+            onDragLeave={() => setIsLibraryDropTarget(false)}
+            onDropFiles={handleBrowserDrop}
             onOpenBook={openLibraryBook}
             onRetryLibrary={refreshLibrary}
             onOpenSample={openSampleReader}
@@ -1017,7 +1230,10 @@ export function ReaderExperience() {
       >
         <section class="reader-surface" aria-label="Reader">
           <ReaderTopAppBar
-            bookTitle={reader().book.title}
+            chapterTitle={reader().chapter.title}
+            activeChapterId={reader().chapter.id}
+            chapters={reader().chapters}
+            sentenceCount={reader().sentences.length}
             onOpenSearch={() => setInspectorTab("search")}
             onOpenSettings={() => setInspectorTab("settings")}
           />
@@ -1050,7 +1266,7 @@ export function ReaderExperience() {
               aria-label={`${reader().chapter.title} text`}
               style={{ "font-size": `${readerContentFontSize()}px` }}
             >
-              <h1 class="article-title">{reader().book.title}</h1>
+              <h1 class="article-title">{reader().chapter.title}</h1>
               <Show when={visibleSentenceRange().hiddenBefore > 0}>
                 <button
                   class="sentence-window-jump"
@@ -1078,7 +1294,10 @@ export function ReaderExperience() {
                     onUnregisterSentence={(sentenceId) => {
                       sentenceElements.delete(sentenceId);
                     }}
-                    onSelectSentence={selectSentence}
+                    onSelectSentence={(sentenceIndex) => {
+                      selectSentence(sentenceIndex);
+                      setInspectorTab("bookmarks");
+                    }}
                     onSelectWord={selectWord}
                     onClearWord={() => setSelectedWord(null)}
                     onSaveWord={saveDictionaryWord}
@@ -1107,6 +1326,7 @@ export function ReaderExperience() {
           readerSearchResults={readerSearchResults()}
           bookmarks={currentBookBookmarks()}
           activeBookmark={activeBookmark()}
+          activeSentence={activeSentence() ?? null}
           bookmarkNotice={bookmarkNotice()}
           audioSettings={audioSettings()}
           readerContentFontSize={readerContentFontSize()}
@@ -1131,11 +1351,20 @@ export function ReaderExperience() {
           onClearCache={clearAudioCache}
           onExportBook={exportCurrentBook}
         />
+        <SidebarResizeHandle
+          sidebar="inspector"
+          edge="left"
+          width={inspectorRailWidth()}
+          defaultWidth={sidebarDefaultWidths.inspector}
+          getBounds={() => getSidebarBounds("inspector")}
+          onWidthChange={setInspectorRailWidth}
+        />
 
         <PlaybackRail
-          bookTitle={reader().book.title}
-          author={reader().book.author}
-          coverImageSrc={reader().book.coverImageSrc}
+          chapterNumber={Math.max(
+            1,
+            reader().chapters.findIndex((chapter) => chapter.id === reader().chapter.id) + 1
+          )}
           chapterTitle={reader().chapter.title}
           progress={readerProgress()}
           sentenceCount={reader().sentences.length}

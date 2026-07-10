@@ -1,9 +1,10 @@
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { LibraryBookSummary, ReaderDocumentDto } from "../reader/reader-document";
 
 export interface BookRepository {
   importBookFromDialog(): Promise<ReaderDocumentDto | null>;
+  importBookFromPath(path: string): Promise<ReaderDocumentDto>;
   listBooks(): Promise<LibraryBookSummary[]>;
   openBook(bookId: string, chapterId?: string): Promise<ReaderDocumentDto>;
   saveReadingPosition(input: SaveReadingPositionInput): Promise<void>;
@@ -71,6 +72,12 @@ export interface BookExportDataDto {
   bookmarks: LibraryBookmarkDto[];
 }
 
+export type BookDropEvent =
+  | { type: "enter"; paths: string[] }
+  | { type: "over" }
+  | { type: "drop"; paths: string[] }
+  | { type: "leave" };
+
 export function createBookRepository(): BookRepository {
   return isTauriRuntime() ? nativeBookRepository : browserBookRepository;
 }
@@ -91,15 +98,22 @@ const nativeBookRepository: BookRepository = {
 
     if (selected == null || Array.isArray(selected)) return null;
 
-    return invoke<ReaderDocumentDto>("import_epub", { path: selected });
+    return this.importBookFromPath(selected);
+  },
+
+  importBookFromPath(path) {
+    return invoke<ReaderDocumentDto>("import_epub", { path }).then(resolveDocumentAssets);
   },
 
   listBooks() {
-    return invoke<LibraryBookSummary[]>("list_books");
+    return invoke<LibraryBookSummary[]>("list_books").then((books) => books.map(resolveBookCover));
   },
 
   openBook(bookId, chapterId) {
-    return invoke<ReaderDocumentDto>("open_book", { bookId, chapterId: chapterId ?? null });
+    return invoke<ReaderDocumentDto>("open_book", {
+      bookId,
+      chapterId: chapterId ?? null
+    }).then(resolveDocumentAssets);
   },
 
   saveReadingPosition(position) {
@@ -141,12 +155,19 @@ const nativeBookRepository: BookRepository = {
   },
 
   exportBookData(bookId) {
-    return invoke<BookExportDataDto>("export_book_data", { bookId });
+    return invoke<BookExportDataDto>("export_book_data", { bookId }).then((data) => ({
+      ...data,
+      book: resolveBookCover(data.book)
+    }));
   }
 };
 
 const browserBookRepository: BookRepository = {
   async importBookFromDialog() {
+    throw new Error("EPUB import is available in the desktop app.");
+  },
+
+  async importBookFromPath() {
     throw new Error("EPUB import is available in the desktop app.");
   },
 
@@ -210,6 +231,36 @@ export function toFriendlyLibraryError(error: unknown): string {
 
 function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+export async function listenForBookDrops(
+  onEvent: (event: BookDropEvent) => void
+): Promise<() => void> {
+  if (!isTauriRuntime()) return () => undefined;
+
+  const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+  return getCurrentWebview().onDragDropEvent(({ payload }) => onEvent(payload));
+}
+
+export function resolveDroppedEpubPath(paths: readonly string[]): string | null {
+  return paths.find((path) => path.trim().toLocaleLowerCase().endsWith(".epub")) ?? null;
+}
+
+function resolveDocumentAssets(document: ReaderDocumentDto): ReaderDocumentDto {
+  return {
+    ...document,
+    book: resolveBookCover(document.book)
+  };
+}
+
+function resolveBookCover<TBook extends { coverImageSrc?: string | null }>(book: TBook): TBook {
+  const source = book.coverImageSrc;
+  if (source == null || /^[a-z][a-z\d+.-]*:/i.test(source)) return book;
+
+  return {
+    ...book,
+    coverImageSrc: convertFileSrc(source, "asset")
+  };
 }
 
 function loadLocalBookmarks(): LibraryBookmarkDto[] {

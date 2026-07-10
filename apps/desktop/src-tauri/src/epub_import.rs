@@ -2,11 +2,10 @@ use std::{
     collections::HashMap,
     fmt,
     fs::File,
-    io::{Cursor, Read},
+    io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
 };
 
-use base64::{engine::general_purpose::STANDARD as base64_standard, Engine as _};
 use sha2::{Digest, Sha256};
 use zip::ZipArchive;
 
@@ -17,9 +16,16 @@ pub struct ImportedBook {
     pub id: String,
     pub title: String,
     pub author: String,
-    pub cover_image_src: Option<String>,
+    pub language: Option<String>,
+    pub cover_image: Option<ImportedCover>,
     pub source_path: String,
     pub chapters: Vec<ImportedChapter>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ImportedCover {
+    pub media_type: String,
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -78,22 +84,32 @@ pub fn import_epub_file(path: &Path) -> Result<ImportedBook, ImportError> {
         return Err(ImportError::InvalidArchive);
     }
 
-    let mut bytes = Vec::new();
-    File::open(path)
-        .and_then(|mut file| file.read_to_end(&mut bytes))
+    let mut file = File::open(path)
+        .map_err(|_| ImportError::ReadFailed("We couldn't open that EPUB.".to_string()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|_| ImportError::ReadFailed("We couldn't open that EPUB.".to_string()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    file.seek(SeekFrom::Start(0))
         .map_err(|_| ImportError::ReadFailed("We couldn't open that EPUB.".to_string()))?;
 
-    let hash = Sha256::digest(&bytes);
+    let hash = hasher.finalize();
     let book_id = format!("book-{}", hex_prefix(&hash, 16));
-    let mut archive =
-        ZipArchive::new(Cursor::new(bytes)).map_err(|_| ImportError::InvalidArchive)?;
+    let mut archive = ZipArchive::new(file).map_err(|_| ImportError::InvalidArchive)?;
     let container = read_zip_text(&mut archive, "META-INF/container.xml")
         .ok_or(ImportError::MissingContainer)?;
     let opf_path = find_package_path(&container).ok_or(ImportError::MissingContainer)?;
     let opf = read_zip_text(&mut archive, &opf_path).ok_or(ImportError::MissingPackage)?;
     let package = parse_package(&opf, &opf_path).ok_or(ImportError::MissingPackage)?;
     let navigation_titles = read_navigation_titles(&mut archive, &package);
-    let cover_image_src = read_cover_image_src(&mut archive, &package);
+    let cover_image = read_cover_image(&mut archive, &package);
     let mut chapters = Vec::new();
 
     for (chapter_index, item) in package.spine.iter().enumerate() {
@@ -108,7 +124,10 @@ pub fn import_epub_file(path: &Path) -> Result<ImportedBook, ImportError> {
         let Some(chapter_xml) = read_zip_text(&mut archive, &chapter_path) else {
             continue;
         };
-        let text = extract_chapter_text(&chapter_xml);
+        let Ok(chapter_document) = parse_epub_xml(&chapter_xml) else {
+            continue;
+        };
+        let text = extract_chapter_text_from_document(&chapter_document);
 
         if text.is_empty() {
             continue;
@@ -119,8 +138,8 @@ pub fn import_epub_file(path: &Path) -> Result<ImportedBook, ImportError> {
             title: navigation_titles
                 .get(&chapter_path)
                 .cloned()
-                .or_else(|| extract_chapter_heading(&chapter_xml))
-                .or_else(|| extract_document_title(&chapter_xml))
+                .or_else(|| first_heading(&chapter_document))
+                .or_else(|| first_text(&chapter_document, "title"))
                 .unwrap_or_else(|| format!("Chapter {}", chapter_index + 1)),
             index: chapter_index,
             body: text,
@@ -141,16 +160,28 @@ pub fn import_epub_file(path: &Path) -> Result<ImportedBook, ImportError> {
         author: package
             .author
             .unwrap_or_else(|| "Unknown author".to_string()),
-        cover_image_src,
+        language: package.language,
+        cover_image,
         source_path: path.to_string_lossy().to_string(),
         chapters,
     })
+}
+
+pub fn read_epub_language(path: &Path) -> Option<String> {
+    let file = File::open(path).ok()?;
+    let mut archive = ZipArchive::new(file).ok()?;
+    let container = read_zip_text(&mut archive, "META-INF/container.xml")?;
+    let opf_path = find_package_path(&container)?;
+    let opf = read_zip_text(&mut archive, &opf_path)?;
+
+    parse_package(&opf, &opf_path)?.language
 }
 
 #[derive(Debug)]
 struct PackageDocument {
     title: Option<String>,
     author: Option<String>,
+    language: Option<String>,
     base_dir: String,
     manifest: HashMap<String, ManifestItem>,
     spine: Vec<SpineItem>,
@@ -182,6 +213,7 @@ fn parse_package(xml: &str, opf_path: &str) -> Option<PackageDocument> {
     let document = parse_epub_xml(xml).ok()?;
     let title = first_text(&document, "title");
     let author = first_text(&document, "creator");
+    let language = first_text(&document, "language");
     let all_manifest_items = document
         .descendants()
         .filter(|node| node.tag_name().name() == "item")
@@ -236,6 +268,7 @@ fn parse_package(xml: &str, opf_path: &str) -> Option<PackageDocument> {
     Some(PackageDocument {
         title,
         author,
+        language,
         base_dir: epub_parent(opf_path),
         manifest,
         spine,
@@ -328,15 +361,17 @@ fn image_media_type(item: &ManifestItem) -> Option<String> {
     Some(inferred.to_string())
 }
 
-fn read_cover_image_src(
-    archive: &mut ZipArchive<Cursor<Vec<u8>>>,
+fn read_cover_image<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
     package: &PackageDocument,
-) -> Option<String> {
+) -> Option<ImportedCover> {
     let cover = package.cover_image.as_ref()?;
     let bytes = read_zip_bytes(archive, &cover.path)?;
-    let encoded = base64_standard.encode(bytes);
 
-    Some(format!("data:{};base64,{}", cover.media_type, encoded))
+    Some(ImportedCover {
+        media_type: cover.media_type.clone(),
+        bytes,
+    })
 }
 
 fn find_package_path(container_xml: &str) -> Option<String> {
@@ -348,8 +383,8 @@ fn find_package_path(container_xml: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn read_navigation_titles(
-    archive: &mut ZipArchive<Cursor<Vec<u8>>>,
+fn read_navigation_titles<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
     package: &PackageDocument,
 ) -> HashMap<String, String> {
     let mut titles = HashMap::new();
@@ -454,22 +489,21 @@ fn parse_ncx_titles(xml: &str, ncx_path: &str) -> HashMap<String, String> {
     titles
 }
 
+#[cfg(test)]
 fn extract_chapter_heading(xml: &str) -> Option<String> {
     let document = parse_epub_xml(xml).ok()?;
-    ["h1", "h2"]
-        .iter()
-        .find_map(|tag| first_text(&document, tag))
+    first_heading(&document)
 }
 
-fn extract_document_title(xml: &str) -> Option<String> {
-    let document = parse_epub_xml(xml).ok()?;
-    first_text(&document, "title")
-}
-
+#[cfg(test)]
 fn extract_chapter_text(xml: &str) -> String {
     let Ok(document) = parse_epub_xml(xml) else {
         return String::new();
     };
+    extract_chapter_text_from_document(&document)
+}
+
+fn extract_chapter_text_from_document(document: &roxmltree::Document<'_>) -> String {
     let body = document
         .descendants()
         .find(|node| node.tag_name().name() == "body")
@@ -483,6 +517,12 @@ fn extract_chapter_text(xml: &str) -> String {
     }
 
     normalize_reader_paragraphs(&blocks.join("\n\n"))
+}
+
+fn first_heading(document: &roxmltree::Document<'_>) -> Option<String> {
+    ["h1", "h2"]
+        .iter()
+        .find_map(|tag| first_text(document, tag))
 }
 
 fn parse_epub_xml(xml: &str) -> Result<roxmltree::Document<'_>, roxmltree::Error> {
@@ -572,14 +612,14 @@ fn node_text(node: roxmltree::Node<'_, '_>) -> String {
     text
 }
 
-fn read_zip_text(archive: &mut ZipArchive<Cursor<Vec<u8>>>, path: &str) -> Option<String> {
+fn read_zip_text<R: Read + Seek>(archive: &mut ZipArchive<R>, path: &str) -> Option<String> {
     let mut file = archive.by_name(path).ok()?;
     let mut text = String::new();
     file.read_to_string(&mut text).ok()?;
     Some(text)
 }
 
-fn read_zip_bytes(archive: &mut ZipArchive<Cursor<Vec<u8>>>, path: &str) -> Option<Vec<u8>> {
+fn read_zip_bytes<R: Read + Seek>(archive: &mut ZipArchive<R>, path: &str) -> Option<Vec<u8>> {
     let mut file = archive.by_name(path).ok()?;
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).ok()?;
@@ -689,6 +729,7 @@ mod tests {
     use super::{
         extract_chapter_heading, extract_chapter_text, find_package_path, import_epub_file,
         normalize_epub_path, parse_epub3_nav_titles, parse_ncx_titles, parse_package,
+        read_epub_language,
     };
 
     #[test]
@@ -710,7 +751,7 @@ mod tests {
     fn parses_metadata_manifest_and_spine() {
         let package = parse_package(
             r#"<package xmlns:dc="http://purl.org/dc/elements/1.1/">
-              <metadata><dc:title>Book</dc:title><dc:creator>Author</dc:creator></metadata>
+              <metadata><dc:title>Book</dc:title><dc:creator>Author</dc:creator><dc:language>fr-FR</dc:language></metadata>
               <manifest><item id="c1" href="chapters/one.xhtml" media-type="application/xhtml+xml"/></manifest>
               <spine><itemref idref="c1"/></spine>
             </package>"#,
@@ -720,6 +761,7 @@ mod tests {
 
         assert_eq!(package.title.as_deref(), Some("Book"));
         assert_eq!(package.author.as_deref(), Some("Author"));
+        assert_eq!(package.language.as_deref(), Some("fr-FR"));
         assert_eq!(
             package.manifest.get("c1").map(|item| item.href.as_str()),
             Some("chapters/one.xhtml")
@@ -899,7 +941,7 @@ mod tests {
                 (
                     "OPS/package/content.opf",
                     r#"<package xmlns:dc="http://purl.org/dc/elements/1.1/">
-                      <metadata></metadata>
+                      <metadata><dc:language>fr</dc:language></metadata>
                       <manifest>
                         <item id="nav" href="../nav/nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
                         <item id="c1" href="../Text/intro.htm" media-type="text/html" />
@@ -949,6 +991,8 @@ mod tests {
 
         assert_eq!(book.title, "Sparse Book");
         assert_eq!(book.author, "Unknown author");
+        assert_eq!(book.language.as_deref(), Some("fr"));
+        assert_eq!(read_epub_language(&epub_path).as_deref(), Some("fr"));
         assert_eq!(book.chapters.len(), 2);
         assert_eq!(book.chapters[0].title, "Opening From Nav");
         assert_eq!(book.chapters[0].body, "Hello reader.");
@@ -1055,10 +1099,9 @@ mod tests {
 
         let book = import_epub_file(&epub_path).expect("epub should import");
 
-        assert_eq!(
-            book.cover_image_src.as_deref(),
-            Some("data:image/jpeg;base64,ZmFrZS1jb3Zlcg==")
-        );
+        let cover = book.cover_image.expect("cover should import");
+        assert_eq!(cover.media_type, "image/jpeg");
+        assert_eq!(cover.bytes, b"fake-cover");
 
         fs::remove_dir_all(temp_dir).ok();
     }
@@ -1101,10 +1144,9 @@ mod tests {
 
         let book = import_epub_file(&epub_path).expect("epub should import");
 
-        assert_eq!(
-            book.cover_image_src.as_deref(),
-            Some("data:image/png;base64,cG5nLWNvdmVy")
-        );
+        let cover = book.cover_image.expect("cover should import");
+        assert_eq!(cover.media_type, "image/png");
+        assert_eq!(cover.bytes, b"png-cover");
 
         fs::remove_dir_all(temp_dir).ok();
     }

@@ -96,12 +96,12 @@ export function piperVoiceFileUrl(voice, extension) {
 }
 
 async function downloadPiperVoice(voice, env) {
-  console.log(`\n> downloading ${voice}`);
   if (piperVoiceInstalled(voice)) {
-    console.log(`Using installed ${voice}`);
+    console.log(`\n> ${voice} is already ready; skipping download`);
     return;
   }
 
+  console.log(`\n> downloading ${voice}`);
   await downloadVoiceFile(voice, ".onnx", env);
   await downloadVoiceFile(voice, ".onnx.json", env);
 }
@@ -193,11 +193,17 @@ async function fetchWithRetries(url, timeoutMs, env, label, resumeFrom = 0) {
 }
 
 function piperVoiceInstalled(voice) {
-  return voiceFileReady(voice, ".onnx") && voiceFileReady(voice, ".onnx.json");
+  return isPiperVoiceReady(voice);
 }
 
-function voiceFileReady(voice, extension) {
-  const path = join(voiceDir, `${voice}${extension}`);
+export function isPiperVoiceReady(voice, directory = voiceDir) {
+  return (
+    voiceFileReady(voice, ".onnx", directory) && voiceFileReady(voice, ".onnx.json", directory)
+  );
+}
+
+function voiceFileReady(voice, extension, directory = voiceDir) {
+  const path = join(directory, `${voice}${extension}`);
   if (!existsSync(path)) return false;
 
   const size = statSync(path).size;

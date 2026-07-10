@@ -15,6 +15,7 @@ export interface ReaderDocumentDto {
     id: string;
     title: string;
     author: string;
+    language?: string | null;
     coverImageSrc?: string | null;
   };
   activeChapterId: string | null;
@@ -34,7 +35,8 @@ export interface ReaderChapterDto {
 export interface ReaderParagraphDto {
   id: string;
   index: number;
-  sentences: ReaderSentenceDto[];
+  startSentenceIndex: number;
+  sentenceCount: number;
 }
 
 export interface ReaderSentenceDto {
