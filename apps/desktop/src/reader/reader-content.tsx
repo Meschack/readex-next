@@ -1,4 +1,5 @@
-import { createMemo, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, For, onCleanup, onMount, Show } from "solid-js";
+import { Portal } from "solid-js/web";
 import { primaryDefinition, type WordInsight } from "@sonelle/learning";
 import { tokenizeReaderText, type ReaderTextToken } from "@sonelle/text";
 import { DictionaryStatus } from "./reader-feedback";
@@ -105,6 +106,7 @@ function SentenceToken(props: SentenceTokenProps) {
   if (props.token.kind === "text") return <>{props.token.text}</>;
 
   const token = props.token;
+  let tokenElement: HTMLSpanElement | undefined;
   const inspectWord = (event: MouseEvent | KeyboardEvent) => {
     event.preventDefault();
     event.stopPropagation();
@@ -113,6 +115,9 @@ function SentenceToken(props: SentenceTokenProps) {
 
   return (
     <span
+      ref={(element) => {
+        tokenElement = element;
+      }}
       classList={{
         "word-token": true,
         selected: props.selected
@@ -128,7 +133,14 @@ function SentenceToken(props: SentenceTokenProps) {
       {token.text}
       <Show when={props.selected ? props.insight : null}>
         {(insight) => (
-          <WordPopover insight={insight()} onClear={props.onClear} onSave={props.onSave} />
+          <Portal>
+            <WordPopover
+              anchorElement={tokenElement}
+              insight={insight()}
+              onClear={props.onClear}
+              onSave={props.onSave}
+            />
+          </Portal>
         )}
       </Show>
     </span>
@@ -136,6 +148,7 @@ function SentenceToken(props: SentenceTokenProps) {
 }
 
 interface WordPopoverProps {
+  anchorElement: HTMLSpanElement | undefined;
   insight: WordInsight;
   onClear: () => void;
   onSave: (insight: WordInsight) => void;
@@ -144,16 +157,58 @@ interface WordPopoverProps {
 function WordPopover(props: WordPopoverProps) {
   let popoverElement: HTMLSpanElement | undefined;
 
+  const updatePosition = () => {
+    const anchor = props.anchorElement;
+    const popover = popoverElement;
+    if (anchor == null || popover == null) return;
+
+    const anchorRect = anchor.getBoundingClientRect();
+    const popoverRect = popover.getBoundingClientRect();
+    const edgePadding = 16;
+    const gap = 12;
+    const maxLeft = Math.max(edgePadding, window.innerWidth - popoverRect.width - edgePadding);
+    const centeredLeft = anchorRect.left + (anchorRect.width - popoverRect.width) / 2;
+    const left = Math.min(maxLeft, Math.max(edgePadding, centeredLeft));
+    const belowTop = anchorRect.bottom + gap;
+    const aboveTop = anchorRect.top - popoverRect.height - gap;
+    const top =
+      belowTop + popoverRect.height <= window.innerHeight - edgePadding || aboveTop < edgePadding
+        ? Math.min(belowTop, window.innerHeight - popoverRect.height - edgePadding)
+        : aboveTop;
+
+    popover.style.left = `${left}px`;
+    popover.style.top = `${Math.max(edgePadding, top)}px`;
+  };
+
   onMount(() => {
+    const schedulePositionUpdate = () => queueMicrotask(updatePosition);
     const closeFromOutsidePointer = (event: PointerEvent) => {
       const target = event.target;
-      if (!(target instanceof Node) || popoverElement?.contains(target)) return;
+      if (
+        !(target instanceof Node) ||
+        popoverElement?.contains(target) ||
+        props.anchorElement?.contains(target)
+      ) {
+        return;
+      }
 
       props.onClear();
     };
 
     document.addEventListener("pointerdown", closeFromOutsidePointer, true);
-    onCleanup(() => document.removeEventListener("pointerdown", closeFromOutsidePointer, true));
+    document.addEventListener("scroll", schedulePositionUpdate, true);
+    window.addEventListener("resize", schedulePositionUpdate);
+    schedulePositionUpdate();
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", closeFromOutsidePointer, true);
+      document.removeEventListener("scroll", schedulePositionUpdate, true);
+      window.removeEventListener("resize", schedulePositionUpdate);
+    });
+  });
+
+  createEffect(() => {
+    props.insight.status;
+    queueMicrotask(updatePosition);
   });
 
   const runAction = (event: MouseEvent, action: () => void) => {

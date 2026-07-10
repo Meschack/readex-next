@@ -55,6 +55,22 @@ export function SettingsIcon() {
   );
 }
 
+export function ChevronDownIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24">
+      <path d="m6.53 8.47 5.47 5.47 5.47-5.47 1.06 1.06-6.53 6.53-6.53-6.53 1.06-1.06Z" />
+    </svg>
+  );
+}
+
+export function CheckIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24">
+      <path d="m9.5 16.38-4.44-4.44L4 13l5.5 5.5L20 8l-1.06-1.06L9.5 16.38Z" />
+    </svg>
+  );
+}
+
 export function HelpIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24">

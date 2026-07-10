@@ -31,6 +31,7 @@ export interface ReaderView {
     id: string;
     title: string;
     author: string;
+    language: string | null;
     coverImageSrc: string | null;
   };
   chapter: {
@@ -94,6 +95,7 @@ export function buildFixtureReaderView(
         id: book.id,
         title: book.title,
         author: book.author,
+        language: "en",
         coverImageSrc: null
       },
       chapter: {
@@ -122,6 +124,7 @@ export function buildFixtureReaderView(
       id: book.id,
       title: book.title,
       author: book.author,
+      language: "en",
       coverImageSrc: null
     },
     chapter: {
@@ -155,6 +158,7 @@ export function buildReaderViewFromDocument(
       source: "library",
       book: {
         ...document.book,
+        language: document.book.language ?? null,
         coverImageSrc: document.book.coverImageSrc ?? null
       },
       chapter: {
@@ -180,6 +184,7 @@ export function buildReaderViewFromDocument(
     source: "library",
     book: {
       ...document.book,
+      language: document.book.language ?? null,
       coverImageSrc: document.book.coverImageSrc ?? null
     },
     chapter: {

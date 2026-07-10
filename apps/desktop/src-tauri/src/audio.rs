@@ -15,6 +15,7 @@ const DEFAULT_PIPER_VOICE: &str = "en_US-lessac-medium";
 const MISSING_NEURAL_VOICE_MESSAGE: &str = "Install a natural local voice to listen offline.";
 const NARRATION_CACHE_VERSION: &str = "piper-v2";
 const CACHE_STATS_FILE: &str = "cache-stats.json";
+const LOCAL_VOICE_STATE_DIR_NAMES: &[&str] = &[".sonelle", ".readex"];
 const PIPER_WORKER_SCRIPT: &str = r#"
 import json
 import sys
@@ -203,19 +204,22 @@ impl SpeechAdapter for LocalSpeechAdapter {
             return Ok(needs_neural_voice());
         };
 
-        if runtime
-            .synthesize_wav(&request.text, &cache.audio_path)
-            .is_ok()
-            && cache.audio_path.exists()
-        {
-            record_prepared_audio(&cache.root, &cache.audio_path)?;
-            return Ok(AdapterOutput {
-                readiness: "ready",
-                playback_mode: "html-audio",
-                source_url: Some(wav_source_path(&cache.audio_path)),
-                cached: false,
-                message: None,
-            });
+        match runtime.synthesize_wav(&request.text, &cache.audio_path) {
+            Ok(()) if cache.audio_path.exists() => {
+                record_prepared_audio(&cache.root, &cache.audio_path)?;
+                return Ok(AdapterOutput {
+                    readiness: "ready",
+                    playback_mode: "html-audio",
+                    source_url: Some(wav_source_path(&cache.audio_path)),
+                    cached: false,
+                    message: None,
+                });
+            }
+            Ok(()) => log_audio_issue(
+                "synthesize",
+                "Piper completed without producing a WAV file.",
+            ),
+            Err(error) => log_audio_issue("synthesize", &error),
         }
 
         Ok(AdapterOutput {
@@ -260,12 +264,33 @@ impl PiperRuntime {
             return Some(runtime.clone());
         }
 
-        let runner = PiperRunner::resolve()?;
-        let voice = PiperVoice::resolve(cache, &cache.request_voice_id)?;
+        let Some(runner) = PiperRunner::resolve() else {
+            log_audio_issue(
+                "resolve",
+                "No Piper runner was found in Sonelle or legacy local voice state.",
+            );
+            return None;
+        };
+        let Some(voice) = PiperVoice::resolve(cache, &cache.request_voice_id) else {
+            log_audio_issue(
+                "resolve",
+                &format!(
+                    "Voice '{}' was not found in Sonelle or legacy local voice state.",
+                    cache.request_voice_id
+                ),
+            );
+            return None;
+        };
         let worker = match &runner {
-            PiperRunner::Python(python) => PiperPythonWorker::start(python, &voice.model_path())
-                .ok()
-                .map(|worker| Arc::new(Mutex::new(worker))),
+            PiperRunner::Python(python) => {
+                match PiperPythonWorker::start(python, &voice.model_path()) {
+                    Ok(worker) => Some(Arc::new(Mutex::new(worker))),
+                    Err(error) => {
+                        log_audio_issue("worker", &error);
+                        None
+                    }
+                }
+            }
             PiperRunner::Binary(_) => None,
         };
         let runtime = Self {
@@ -273,6 +298,7 @@ impl PiperRuntime {
             voice,
             worker,
         };
+        runtimes.clear();
         runtimes.insert(key, runtime.clone());
         Some(runtime)
     }
@@ -318,21 +344,27 @@ impl PiperRuntime {
 
 #[derive(Debug)]
 struct PiperPythonWorker {
-    _child: Child,
+    child: Child,
     input: ChildStdin,
     output: BufReader<ChildStdout>,
 }
 
 impl PiperPythonWorker {
     fn start(python: &Path, model: &Path) -> Result<Self, String> {
-        let mut child = Command::new(python)
+        let mut command = Command::new(python);
+        command
             .arg("-u")
             .arg("-c")
             .arg(PIPER_WORKER_SCRIPT)
             .arg(model)
             .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stdout(Stdio::piped());
+        if cfg!(debug_assertions) {
+            command.stderr(Stdio::inherit());
+        } else {
+            command.stderr(Stdio::null());
+        }
+        let mut child = command
             .spawn()
             .map_err(|_| "We couldn't start the local voice.".to_string())?;
         let input = child
@@ -344,7 +376,7 @@ impl PiperPythonWorker {
             .take()
             .ok_or_else(|| "We couldn't open the local voice output.".to_string())?;
         let mut worker = Self {
-            _child: child,
+            child,
             input,
             output: BufReader::new(output),
         };
@@ -352,7 +384,7 @@ impl PiperPythonWorker {
         if response == "READY" {
             Ok(worker)
         } else {
-            Err("We couldn't load the local voice.".to_string())
+            Err(format!("Piper could not load the local voice: {response}"))
         }
     }
 
@@ -370,10 +402,11 @@ impl PiperPythonWorker {
             .and_then(|_| self.input.flush())
             .map_err(|_| "We couldn't prepare local narration.".to_string())?;
 
-        if self.read_response()? == "OK" {
+        let response = self.read_response()?;
+        if response == "OK" {
             Ok(())
         } else {
-            Err("Local voice needs attention. Try reinstalling it.".to_string())
+            Err(format!("Piper could not prepare narration: {response}"))
         }
     }
 
@@ -381,8 +414,15 @@ impl PiperPythonWorker {
         let mut response = String::new();
         self.output
             .read_line(&mut response)
-            .map_err(|_| "We couldn't read the local voice response.".to_string())?;
+            .map_err(|error| format!("Piper response could not be read: {error}"))?;
         Ok(response.trim().to_string())
+    }
+}
+
+impl Drop for PiperPythonWorker {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 
@@ -678,12 +718,30 @@ fn sonelle_state_dirs() -> Vec<PathBuf> {
 }
 
 fn push_sonelle_state_dirs(dirs: &mut Vec<PathBuf>, start: &Path) {
-    for ancestor in start.ancestors() {
-        let candidate = ancestor.join(".sonelle");
+    for candidate in voice_state_dirs_from(start) {
         if !dirs.contains(&candidate) {
             dirs.push(candidate);
         }
     }
+}
+
+fn voice_state_dirs_from(start: &Path) -> Vec<PathBuf> {
+    start
+        .ancestors()
+        .flat_map(|ancestor| {
+            LOCAL_VOICE_STATE_DIR_NAMES
+                .iter()
+                .map(move |name| ancestor.join(name))
+        })
+        .collect()
+}
+
+fn log_audio_issue(stage: &str, detail: &str) {
+    #[cfg(debug_assertions)]
+    eprintln!("[sonelle][audio][{stage}] {detail}");
+
+    #[cfg(not(debug_assertions))]
+    let _ = (stage, detail);
 }
 
 fn piper_model_exists(model: &Path) -> bool {
@@ -835,8 +893,8 @@ mod tests {
 
     use super::{
         piper_model_exists, piper_voice_exists, record_prepared_audio, summarize_audio_cache_at,
-        FakeSpeechAdapter, LocalSpeechAdapter, PiperRuntime, SentenceAudioCache,
-        SentenceAudioRequest, SpeechAdapter, DEFAULT_PIPER_VOICE,
+        voice_state_dirs_from, FakeSpeechAdapter, LocalSpeechAdapter, PiperRuntime,
+        SentenceAudioCache, SentenceAudioRequest, SpeechAdapter, DEFAULT_PIPER_VOICE,
     };
 
     #[test]
@@ -964,6 +1022,15 @@ mod tests {
         assert!(piper_model_exists(&model));
 
         fs::remove_dir_all(temp_dir).ok();
+    }
+
+    #[test]
+    fn legacy_readex_voice_state_remains_discoverable() {
+        let workspace = temp_audio_dir().join("workspace");
+        let state_dirs = voice_state_dirs_from(&workspace);
+
+        assert!(state_dirs.contains(&workspace.join(".sonelle")));
+        assert!(state_dirs.contains(&workspace.join(".readex")));
     }
 
     #[test]

@@ -1,15 +1,25 @@
 {
-  "defaultVoiceId": "en_US-lessac-medium",
+  "defaultVoiceId": "en_US-amy-medium",
   "voices": [
     {
-      "id": "en_US-lessac-medium",
-      "label": "American English",
+      "id": "en_US-amy-medium",
+      "label": "American Female",
       "locale": "en-US"
     },
     {
       "id": "en_GB-alba-medium",
-      "label": "British English",
+      "label": "English Female",
       "locale": "en-GB"
+    },
+    {
+      "id": "en_GB-northern_english_male-medium",
+      "label": "English Male",
+      "locale": "en-GB"
+    },
+    {
+      "id": "fr_FR-siwis-medium",
+      "label": "Femme française",
+      "locale": "fr-FR"
     }
   ]
 }

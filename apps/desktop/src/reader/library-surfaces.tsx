@@ -15,15 +15,12 @@ import type { ReaderChapterNavigationItem } from "./reader-view";
 import {
   ArrowLeftIcon,
   BookmarkIcon,
-  HeadphonesIcon,
   HelpIcon,
   LibraryIcon,
-  MoreIcon,
   PlusIcon,
   ReaderIcon,
   SearchIcon,
   SettingsIcon,
-  SlidersIcon,
   WordIcon
 } from "./reader-icons";
 
@@ -67,7 +64,8 @@ export function LibraryRail(props: LibraryRailProps) {
     <aside
       classList={{
         "library-rail": true,
-        "focused-book": isBookRailMode(props.mode)
+        "focused-book": isBookRailMode(props.mode),
+        "library-mode": !isBookRailMode(props.mode)
       }}
       aria-label="Library"
     >
@@ -139,8 +137,10 @@ function NavigationRail(props: NavigationRailProps) {
   return (
     <>
       <header class="side-brand">
-        <strong>Sonelle</strong>
-        <span>Premium Immersive Reading</span>
+        <strong>Library</strong>
+        <span>
+          {props.books.length + 1} {props.books.length === 0 ? "book" : "books"} stored locally
+        </span>
       </header>
 
       <nav class="nav-list" aria-label="Primary">
@@ -150,7 +150,7 @@ function NavigationRail(props: NavigationRailProps) {
           onClick={() => props.onOpenView("reader")}
         >
           <ReaderIcon />
-          <span>Reader</span>
+          <span>Continue reading</span>
         </button>
         <details class="library-shelf">
           <summary
@@ -161,7 +161,7 @@ function NavigationRail(props: NavigationRailProps) {
             }}
           >
             <LibraryIcon />
-            <span>Library</span>
+            <span>All books</span>
           </summary>
           <section class="library-actions" aria-label="Book library">
             <div class="library-controls">
@@ -237,11 +237,11 @@ function NavigationRail(props: NavigationRailProps) {
         </details>
         <button class="nav-link" type="button" onClick={() => props.onOpenToolTab("bookmarks")}>
           <BookmarkIcon />
-          <span>Bookmarks</span>
+          <span>Saved passages</span>
         </button>
         <button class="nav-link" type="button" onClick={() => props.onOpenToolTab("word")}>
           <WordIcon />
-          <span>Words</span>
+          <span>Vocabulary</span>
         </button>
       </nav>
 
@@ -325,9 +325,10 @@ function ActiveBookNavigation(props: ActiveBookNavigationProps) {
         </div>
       </div>
 
+      <span class="chapter-list-label">Chapters</span>
       <div class="sidebar-chapter-list" role="list">
         <For each={props.chapters}>
-          {(chapter) => (
+          {(chapter, index) => (
             <button
               classList={{
                 "sidebar-chapter-row": true,
@@ -336,7 +337,9 @@ function ActiveBookNavigation(props: ActiveBookNavigationProps) {
               type="button"
               onClick={() => props.onOpenChapter(chapter.id)}
             >
-              <span>{chapter.title}</span>
+              <span>
+                {index() + 1}. {chapter.title}
+              </span>
               <small>
                 {chapter.sentenceCount} sentence{chapter.sentenceCount === 1 ? "" : "s"}
               </small>
@@ -391,81 +394,85 @@ export function LibraryWorkspace(props: LibraryWorkspaceProps) {
         props.onDropFiles(Array.from(event.dataTransfer?.files ?? []));
       }}
     >
-      <header class="library-topbar">
-        <h1>Library</h1>
-        <div class="top-app-actions">
-          <button type="button" aria-label="Listen">
-            <HeadphonesIcon />
+      <section class="library-collection" aria-label="Book collection">
+        <div class="library-collection-header">
+          <div>
+            <p>Offline library</p>
+            <h1>Your library</h1>
+            <span>
+              {props.totalBookCount === 0
+                ? "Import an EPUB and keep every page on your device."
+                : `${props.totalBookCount} book${props.totalBookCount === 1 ? "" : "s"} ready to read.`}
+            </span>
+          </div>
+          <button
+            class="library-add-button"
+            type="button"
+            disabled={props.importing}
+            onClick={props.onImport}
+          >
+            <PlusIcon />
+            {props.importing ? "Adding EPUB" : "Add EPUB"}
           </button>
-          <button type="button" aria-label="More actions">
-            <MoreIcon />
-          </button>
-          <span class="user-chip" aria-hidden="true">
-            R
-          </span>
         </div>
-      </header>
 
-      <Show
-        when={!hasNoBooks()}
-        fallback={
-          <EmptyLibraryState
-            importing={props.importing}
-            notice={props.notice}
-            onImport={props.onImport}
-            onOpenSample={props.onOpenSample}
-            onRetryLibrary={props.onRetryLibrary}
-          />
-        }
-      >
-        <section class="library-collection" aria-label="Book collection">
-          <div class="library-collection-header">
-            <div>
-              <p>All Books</p>
-              <h2>Your Collection</h2>
-              <span>Manage your digital shelves and reading progress.</span>
-            </div>
+        <button
+          class="library-drop-zone"
+          type="button"
+          disabled={props.importing}
+          onClick={props.onImport}
+        >
+          <span class="library-drop-icon" aria-hidden="true">
+            <PlusIcon />
+          </span>
+          <strong>{props.dropActive ? "Release to add your book" : "Drop an EPUB here"}</strong>
+          <small>Or choose a file. Your books stay private and local.</small>
+        </button>
+
+        <Show
+          when={!hasNoBooks()}
+          fallback={
+            <EmptyLibraryState
+              notice={props.notice}
+              onOpenSample={props.onOpenSample}
+              onRetryLibrary={props.onRetryLibrary}
+            />
+          }
+        >
+          <div class="library-tools">
             <label class="library-search">
               <SearchIcon />
               <input
                 aria-label="Search library"
                 type="search"
                 value={props.query}
-                placeholder="Search library..."
+                placeholder="Search library"
                 onInput={(event) => props.onQueryChange(event.currentTarget.value)}
               />
             </label>
-          </div>
-
-          <div class="library-filter-row" aria-label="Library filters">
-            <button
-              classList={{ active: props.filter === "all" }}
-              type="button"
-              onClick={() => props.onFilterChange("all")}
-            >
-              Recent
-            </button>
-            <button
-              classList={{ active: props.filter === "in-progress" }}
-              type="button"
-              onClick={() => props.onFilterChange("in-progress")}
-            >
-              In progress
-            </button>
-            <button type="button" onClick={() => props.onFilterChange("all")}>
-              Unread
-            </button>
-            <button
-              classList={{ active: props.filter === "bookmarked" }}
-              type="button"
-              onClick={() => props.onFilterChange("bookmarked")}
-            >
-              Bookmarked
-            </button>
-            <span class="library-view-icons" aria-hidden="true">
-              <SlidersIcon />
-              <LibraryIcon />
-            </span>
+            <div class="library-filter-row" aria-label="Library filters">
+              <button
+                classList={{ active: props.filter === "all" }}
+                type="button"
+                onClick={() => props.onFilterChange("all")}
+              >
+                All books
+              </button>
+              <button
+                classList={{ active: props.filter === "in-progress" }}
+                type="button"
+                onClick={() => props.onFilterChange("in-progress")}
+              >
+                In progress
+              </button>
+              <button
+                classList={{ active: props.filter === "bookmarked" }}
+                type="button"
+                onClick={() => props.onFilterChange("bookmarked")}
+              >
+                Bookmarked
+              </button>
+            </div>
           </div>
 
           <Show when={props.notice}>
@@ -491,36 +498,27 @@ export function LibraryWorkspace(props: LibraryWorkspaceProps) {
                       title={book.title}
                       src={book.coverImageSrc}
                     />
-                    <strong>{book.title}</strong>
-                    <small>{book.author}</small>
-                    <div class="library-card-progress" aria-hidden="true">
-                      <span style={{ width: `${libraryProgressPercent(book)}%` }} />
-                    </div>
-                    <em>{libraryProgressPercent(book)}%</em>
+                    <span class="library-book-copy">
+                      <strong>{book.title}</strong>
+                      <small>{book.author}</small>
+                      <span class="library-card-progress" aria-hidden="true">
+                        <span style={{ width: `${libraryProgressPercent(book)}%` }} />
+                      </span>
+                      <em>{libraryProgressPercent(book)}% read</em>
+                    </span>
                   </button>
                 )}
               </For>
-              <button
-                class="library-drop-card"
-                type="button"
-                disabled={props.importing}
-                onClick={props.onImport}
-              >
-                <PlusIcon />
-                <strong>{props.importing ? "Adding EPUB" : "Drop New EPUB"}</strong>
-              </button>
             </div>
           </Show>
-        </section>
-      </Show>
+        </Show>
+      </section>
     </section>
   );
 }
 
 interface EmptyLibraryStateProps {
-  importing: boolean;
   notice: string | null;
-  onImport: () => void;
   onOpenSample: () => void;
   onRetryLibrary: () => void;
 }
@@ -528,33 +526,12 @@ interface EmptyLibraryStateProps {
 function EmptyLibraryState(props: EmptyLibraryStateProps) {
   return (
     <section class="empty-library-state" aria-label="Empty library">
-      <div class="empty-drop-illustration" aria-hidden="true">
-        <span>
-          <PlusIcon />
-          Drop file here
-        </span>
-      </div>
-      <h2>Your library is empty.</h2>
-      <p>
-        Import your first EPUB to start reading. Sonelle supports rich formatting, deep annotations,
-        and seamless narration.
-      </p>
-      <button
-        class="empty-import-button"
-        type="button"
-        disabled={props.importing}
-        onClick={props.onImport}
-      >
-        <PlusIcon />
-        {props.importing ? "Importing EPUB" : "Import EPUB"}
-      </button>
+      <h2>No books here yet</h2>
+      <p>Use the drop area above, or open the sample while you get settled.</p>
       <div class="sample-collection-row">
-        <span>Or browse our sample collection</span>
+        <span>Explore the sample</span>
         <button type="button" onClick={props.onOpenSample}>
-          Classic Literature
-        </button>
-        <button type="button" onClick={props.onOpenSample}>
-          Research Papers
+          Open The Listening Margin
         </button>
       </div>
       <Show when={props.notice}>

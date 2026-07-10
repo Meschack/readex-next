@@ -24,8 +24,8 @@ interface SidebarResizeBoundsInput {
 }
 
 export const sidebarDefaultWidths: Record<ResizableSidebar, number> = {
-  library: 260,
-  inspector: 320
+  library: 270,
+  inspector: 310
 };
 
 const sidebarWidthLimits: Record<ResizableSidebar, SidebarWidthBounds> = {

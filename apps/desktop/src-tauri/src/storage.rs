@@ -1,4 +1,8 @@
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -8,7 +12,7 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 
 use crate::{
-    epub_import::{ImportedBook, ImportedCover},
+    epub_import::{read_epub_language, ImportedBook, ImportedCover},
     text::{segment_normalized_paragraphs, segment_paragraphs},
 };
 
@@ -41,6 +45,7 @@ pub struct ReaderBookView {
     pub id: String,
     pub title: String,
     pub author: String,
+    pub language: Option<String>,
     pub cover_image_src: Option<String>,
 }
 
@@ -195,17 +200,19 @@ impl SonelleStore {
 
         transaction
             .execute(
-                "INSERT INTO books (id, title, author, cover_image_src, source_path, imported_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                "INSERT INTO books (id, title, author, language, cover_image_src, source_path, imported_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(id) DO UPDATE SET
                    title = excluded.title,
                    author = excluded.author,
+                   language = excluded.language,
                    cover_image_src = excluded.cover_image_src,
                    source_path = excluded.source_path",
                 params![
                     book.id,
                     book.title,
                     book.author,
+                    book.language,
                     cover_image_src,
                     book.source_path,
                     imported_at
@@ -695,6 +702,7 @@ impl SonelleStore {
                     id TEXT PRIMARY KEY,
                     title TEXT NOT NULL,
                     author TEXT NOT NULL,
+                    language TEXT,
                     cover_image_src TEXT,
                     source_path TEXT NOT NULL,
                     imported_at TEXT NOT NULL,
@@ -803,6 +811,7 @@ impl SonelleStore {
         }
 
         ensure_column(&connection, "books", "cover_image_src", "TEXT")?;
+        ensure_column(&connection, "books", "language", "TEXT")?;
         let added_book_chapter_count = ensure_column(
             &connection,
             "books",
@@ -851,22 +860,39 @@ impl SonelleStore {
     }
 
     fn read_book(&self, connection: &Connection, book_id: &str) -> Result<ReaderBookView, String> {
-        connection
+        let (mut book, source_path) = connection
             .query_row(
-                "SELECT id, title, author, cover_image_src FROM books WHERE id = ?1",
+                "SELECT id, title, author, language, cover_image_src, source_path
+                 FROM books WHERE id = ?1",
                 params![book_id],
                 |row| {
-                    Ok(ReaderBookView {
-                        id: row.get(0)?,
-                        title: row.get(1)?,
-                        author: row.get(2)?,
-                        cover_image_src: row.get(3)?,
-                    })
+                    Ok((
+                        ReaderBookView {
+                            id: row.get(0)?,
+                            title: row.get(1)?,
+                            author: row.get(2)?,
+                            language: row.get(3)?,
+                            cover_image_src: row.get(4)?,
+                        },
+                        row.get::<_, String>(5)?,
+                    ))
                 },
             )
             .optional()
             .map_err(|_| "We couldn't open that book.".to_string())?
-            .ok_or_else(|| "We couldn't find that book in your library.".to_string())
+            .ok_or_else(|| "We couldn't find that book in your library.".to_string())?;
+
+        if book.language.is_none() {
+            if let Some(language) = read_epub_language(Path::new(&source_path)) {
+                let _ = connection.execute(
+                    "UPDATE books SET language = ?1 WHERE id = ?2",
+                    params![&language, &book.id],
+                );
+                book.language = Some(language);
+            }
+        }
+
+        Ok(book)
     }
 
     fn read_position(
@@ -1428,6 +1454,7 @@ mod tests {
                 id: "book-test".to_string(),
                 title: "Test Book".to_string(),
                 author: "Test Author".to_string(),
+                language: Some("fr-FR".to_string()),
                 cover_image: None,
                 source_path: "/tmp/test.epub".to_string(),
                 chapters: vec![ImportedChapter {
@@ -1440,6 +1467,7 @@ mod tests {
             .expect("book should save");
 
         assert_eq!(document.book.title, "Test Book");
+        assert_eq!(document.book.language.as_deref(), Some("fr-FR"));
         assert_eq!(document.chapters[0].sentences.len(), 2);
         assert_eq!(store.list_books().expect("books should list").len(), 1);
 
@@ -1461,6 +1489,7 @@ mod tests {
                 .sentence_index,
             1
         );
+        assert_eq!(reopened.book.language.as_deref(), Some("fr-FR"));
 
         fs::remove_dir_all(temp_dir).ok();
     }
@@ -1491,6 +1520,7 @@ mod tests {
                 id: "book-cover".to_string(),
                 title: "Covered Book".to_string(),
                 author: "Test Author".to_string(),
+                language: None,
                 cover_image: Some(ImportedCover {
                     media_type: "image/png".to_string(),
                     bytes: cover_bytes.clone(),
@@ -1536,6 +1566,7 @@ mod tests {
                 id: "book-counts".to_string(),
                 title: "Counted Book".to_string(),
                 author: "Test Author".to_string(),
+                language: None,
                 cover_image: None,
                 source_path: "/tmp/counts.epub".to_string(),
                 chapters: vec![
@@ -1576,6 +1607,7 @@ mod tests {
                 id: "book-active".to_string(),
                 title: "Active Book".to_string(),
                 author: "Test Author".to_string(),
+                language: None,
                 cover_image: None,
                 source_path: "/tmp/active.epub".to_string(),
                 chapters: vec![
@@ -1650,6 +1682,7 @@ mod tests {
                 id: "book-paragraphs".to_string(),
                 title: "Paragraph Book".to_string(),
                 author: "Test Author".to_string(),
+                language: None,
                 cover_image: None,
                 source_path: "/tmp/paragraphs.epub".to_string(),
                 chapters: vec![ImportedChapter {
@@ -1694,6 +1727,7 @@ mod tests {
                 id: "book-search".to_string(),
                 title: "Searchable Book".to_string(),
                 author: "Test Author".to_string(),
+                language: None,
                 cover_image: None,
                 source_path: "/tmp/search.epub".to_string(),
                 chapters: vec![ImportedChapter {
@@ -2037,6 +2071,7 @@ mod tests {
             id: "synthetic-large-book".to_string(),
             title: "Synthetic Large Book".to_string(),
             author: "Sonelle QA".to_string(),
+            language: None,
             cover_image: None,
             source_path: "synthetic://large-book".to_string(),
             chapters: (0..14)

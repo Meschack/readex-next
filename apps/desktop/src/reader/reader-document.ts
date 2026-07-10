@@ -15,6 +15,7 @@ export interface ReaderDocumentDto {
     id: string;
     title: string;
     author: string;
+    language?: string | null;
     coverImageSrc?: string | null;
   };
   activeChapterId: string | null;

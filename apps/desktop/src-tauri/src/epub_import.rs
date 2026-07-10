@@ -16,6 +16,7 @@ pub struct ImportedBook {
     pub id: String,
     pub title: String,
     pub author: String,
+    pub language: Option<String>,
     pub cover_image: Option<ImportedCover>,
     pub source_path: String,
     pub chapters: Vec<ImportedChapter>,
@@ -159,16 +160,28 @@ pub fn import_epub_file(path: &Path) -> Result<ImportedBook, ImportError> {
         author: package
             .author
             .unwrap_or_else(|| "Unknown author".to_string()),
+        language: package.language,
         cover_image,
         source_path: path.to_string_lossy().to_string(),
         chapters,
     })
 }
 
+pub fn read_epub_language(path: &Path) -> Option<String> {
+    let file = File::open(path).ok()?;
+    let mut archive = ZipArchive::new(file).ok()?;
+    let container = read_zip_text(&mut archive, "META-INF/container.xml")?;
+    let opf_path = find_package_path(&container)?;
+    let opf = read_zip_text(&mut archive, &opf_path)?;
+
+    parse_package(&opf, &opf_path)?.language
+}
+
 #[derive(Debug)]
 struct PackageDocument {
     title: Option<String>,
     author: Option<String>,
+    language: Option<String>,
     base_dir: String,
     manifest: HashMap<String, ManifestItem>,
     spine: Vec<SpineItem>,
@@ -200,6 +213,7 @@ fn parse_package(xml: &str, opf_path: &str) -> Option<PackageDocument> {
     let document = parse_epub_xml(xml).ok()?;
     let title = first_text(&document, "title");
     let author = first_text(&document, "creator");
+    let language = first_text(&document, "language");
     let all_manifest_items = document
         .descendants()
         .filter(|node| node.tag_name().name() == "item")
@@ -254,6 +268,7 @@ fn parse_package(xml: &str, opf_path: &str) -> Option<PackageDocument> {
     Some(PackageDocument {
         title,
         author,
+        language,
         base_dir: epub_parent(opf_path),
         manifest,
         spine,
@@ -714,6 +729,7 @@ mod tests {
     use super::{
         extract_chapter_heading, extract_chapter_text, find_package_path, import_epub_file,
         normalize_epub_path, parse_epub3_nav_titles, parse_ncx_titles, parse_package,
+        read_epub_language,
     };
 
     #[test]
@@ -735,7 +751,7 @@ mod tests {
     fn parses_metadata_manifest_and_spine() {
         let package = parse_package(
             r#"<package xmlns:dc="http://purl.org/dc/elements/1.1/">
-              <metadata><dc:title>Book</dc:title><dc:creator>Author</dc:creator></metadata>
+              <metadata><dc:title>Book</dc:title><dc:creator>Author</dc:creator><dc:language>fr-FR</dc:language></metadata>
               <manifest><item id="c1" href="chapters/one.xhtml" media-type="application/xhtml+xml"/></manifest>
               <spine><itemref idref="c1"/></spine>
             </package>"#,
@@ -745,6 +761,7 @@ mod tests {
 
         assert_eq!(package.title.as_deref(), Some("Book"));
         assert_eq!(package.author.as_deref(), Some("Author"));
+        assert_eq!(package.language.as_deref(), Some("fr-FR"));
         assert_eq!(
             package.manifest.get("c1").map(|item| item.href.as_str()),
             Some("chapters/one.xhtml")
@@ -924,7 +941,7 @@ mod tests {
                 (
                     "OPS/package/content.opf",
                     r#"<package xmlns:dc="http://purl.org/dc/elements/1.1/">
-                      <metadata></metadata>
+                      <metadata><dc:language>fr</dc:language></metadata>
                       <manifest>
                         <item id="nav" href="../nav/nav.xhtml" media-type="application/xhtml+xml" properties="nav" />
                         <item id="c1" href="../Text/intro.htm" media-type="text/html" />
@@ -974,6 +991,8 @@ mod tests {
 
         assert_eq!(book.title, "Sparse Book");
         assert_eq!(book.author, "Unknown author");
+        assert_eq!(book.language.as_deref(), Some("fr"));
+        assert_eq!(read_epub_language(&epub_path).as_deref(), Some("fr"));
         assert_eq!(book.chapters.len(), 2);
         assert_eq!(book.chapters[0].title, "Opening From Nav");
         assert_eq!(book.chapters[0].body, "Hello reader.");

@@ -11,6 +11,7 @@ import {
 import {
   createAudioSettings,
   createPrefetchingNarrationGateway,
+  resolveNarrationVoiceForLanguage,
   type AudioSettings,
   type SentenceNarration,
   type SentenceNarrationRequest
@@ -61,7 +62,12 @@ import {
   type AudioCacheStatsDto
 } from "../audio/audio-cache-repository";
 import { createAudioSettingsRepository } from "../audio/audio-settings-repository";
-import { createNarrationRepository, toFriendlyNarrationError } from "../audio/narration-repository";
+import {
+  createNarrationRepository,
+  reportNarrationDevelopmentError,
+  toFriendlyNarrationError
+} from "../audio/narration-repository";
+import { createPlayableAudioSource } from "../audio/playable-audio-source";
 import { createDictionaryRepository } from "../learning/dictionary-repository";
 import {
   createBookRepository,
@@ -73,7 +79,7 @@ import {
   type LibrarySearchResultDto,
   type SaveReadingPositionInput
 } from "../library/book-repository";
-import { ChapterNavigator, PlaybackRail, ReaderTopAppBar } from "./reader-chrome";
+import { ChapterNavigator, PlaybackRail, ProductBar, ReaderTopAppBar } from "./reader-chrome";
 import { nextReaderChapter } from "./reader-chapter-flow";
 import { ReaderParagraph } from "./reader-content";
 import { createSampleExport, downloadJson } from "./reader-export";
@@ -114,6 +120,7 @@ const renderedSentenceTrail = 48;
 const librarySearchDelayMs = 180;
 const playbackPositionSaveDelayMs = 2_500;
 const chapterTransitionDelayMs = 5_000;
+const narrationPlaybackFailureMessage = "We couldn't play this narration. Please try again.";
 
 type PositionSaveIntent = "immediate" | "playback";
 
@@ -179,6 +186,7 @@ export function ReaderExperience() {
   });
 
   let activeHtmlAudio: HTMLAudioElement | null = null;
+  let finishActiveHtmlAudio: (() => void) | null = null;
   let narrationRun = 0;
   let chapterTransitionRun = 0;
   let librarySearchRun = 0;
@@ -396,10 +404,16 @@ export function ReaderExperience() {
     onCleanup(() => {
       narrationRun += 1;
       setIsPreparingNarration(false);
-      activeHtmlAudio?.pause();
-      activeHtmlAudio = null;
+      stopActiveHtmlAudio();
       if (activeNarration()?.playbackMode === "native-speech") {
-        void narrationRepository.stopPreparedSentenceAudio().catch(() => undefined);
+        void narrationRepository.stopPreparedSentenceAudio().catch((error) => {
+          reportNarrationDevelopmentError(error, {
+            stage: "stop",
+            sentenceId: request.sentenceId,
+            voiceId: request.voiceId,
+            playbackMode: "native-speech"
+          });
+        });
       }
     });
   });
@@ -544,7 +558,7 @@ export function ReaderExperience() {
     }));
 
     try {
-      const entry = await dictionaryRepository.lookupWord(surface);
+      const entry = await dictionaryRepository.lookupWord(surface, reader().book.language);
       setDictionaryLookups((current) => ({
         ...current,
         [key]: entry == null ? dictionaryLookupNotFound(surface) : dictionaryLookupReady(entry)
@@ -576,8 +590,7 @@ export function ReaderExperience() {
     const nextAudioSettings = createAudioSettings({ ...currentSettings, ...nextSettings });
 
     if (nextAudioSettings.voiceId !== currentSettings.voiceId) {
-      activeHtmlAudio?.pause();
-      activeHtmlAudio = null;
+      stopActiveHtmlAudio();
       narrationRepository.clearPrefetchedNarrations();
       setActiveNarration(null);
       setNarrationNotice(null);
@@ -628,10 +641,31 @@ export function ReaderExperience() {
     sentenceIndex = nextReader.initialSentenceIndex,
     playbackStatus: PlaybackStatus = "idle"
   ) => {
+    const previousReader = reader();
+    const currentAudioSettings = audioSettings();
+    const switchingBooks =
+      nextReader.book.id !== previousReader.book.id || nextReader.source !== previousReader.source;
+    const nextVoiceId = switchingBooks
+      ? resolveNarrationVoiceForLanguage(nextReader.book.language, currentAudioSettings.voiceId)
+      : currentAudioSettings.voiceId;
+    const nextAudioSettings = createAudioSettings({
+      ...currentAudioSettings,
+      voiceId: nextVoiceId
+    });
+
     readingPositionScheduler.flush();
     nextPositionSaveIntent = "immediate";
     sentenceElements.clear();
+
+    if (nextAudioSettings.voiceId !== currentAudioSettings.voiceId) {
+      stopActiveHtmlAudio();
+      narrationRepository.clearPrefetchedNarrations();
+    }
+
     batch(() => {
+      if (nextAudioSettings.voiceId !== currentAudioSettings.voiceId) {
+        setAudioSettings(nextAudioSettings);
+      }
       setReader(nextReader);
       setPlayback(() =>
         selectPlaybackSentence(
@@ -654,6 +688,8 @@ export function ReaderExperience() {
     currentReader: ReaderView,
     activeSentenceIndex: number
   ) => {
+    let failureStage: "prepare" | "playback" = "prepare";
+
     try {
       const narration = await narrationRepository.prepareSentenceAudio(request);
       if (runId !== narrationRun) return;
@@ -662,14 +698,25 @@ export function ReaderExperience() {
       setIsPreparingNarration(false);
 
       if (narration.readiness !== "ready") {
-        setNarrationNotice(narration.message ?? "Narration needs attention.");
+        const message = narration.message ?? "Narration needs attention.";
+        reportNarrationDevelopmentError(message, {
+          stage: "prepare",
+          sentenceId: request.sentenceId,
+          voiceId: request.voiceId,
+          playbackMode: narration.playbackMode
+        });
+        setNarrationNotice(message);
         setPlayback((current) => pausePlayback(current));
         return;
       }
 
+      failureStage = "playback";
       prefetchNextSentenceNarration(currentReader, activeSentenceIndex);
 
-      if (narration.playbackMode === "html-audio" && narration.sourceUrl != null) {
+      if (narration.playbackMode === "html-audio") {
+        if (narration.sourceUrl == null) {
+          throw new Error("Ready HTML narration did not include an audio source URL.");
+        }
         await playHtmlAudio(narration.sourceUrl, runId);
       } else {
         await narrationRepository.playPreparedSentenceAudio(request, narration);
@@ -683,36 +730,74 @@ export function ReaderExperience() {
     } catch (error) {
       if (runId !== narrationRun) return;
 
+      reportNarrationDevelopmentError(error, {
+        stage: failureStage,
+        sentenceId: request.sentenceId,
+        voiceId: request.voiceId,
+        playbackMode: activeNarration()?.playbackMode ?? null
+      });
       setIsPreparingNarration(false);
-      setNarrationNotice(toFriendlyNarrationError(error));
+      setNarrationNotice(
+        failureStage === "prepare"
+          ? toFriendlyNarrationError(error)
+          : narrationPlaybackFailureMessage
+      );
       setPlayback((current) => pausePlayback(current));
     }
   };
 
-  const playHtmlAudio = (sourceUrl: string, runId: number): Promise<void> =>
-    new Promise((resolve, reject) => {
-      activeHtmlAudio?.pause();
+  const playHtmlAudio = async (sourceUrl: string, runId: number): Promise<void> => {
+    stopActiveHtmlAudio();
 
-      const audio = new Audio(sourceUrl);
+    const playableSource = await createPlayableAudioSource(sourceUrl);
+    if (runId !== narrationRun) {
+      playableSource.dispose();
+      return;
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const audio = new Audio(playableSource.url);
       let settled = false;
+      const cleanUp = () => {
+        audio.onended = null;
+        audio.onpause = null;
+        audio.onerror = null;
+        playableSource.dispose();
+        if (activeHtmlAudio === audio) {
+          activeHtmlAudio = null;
+          finishActiveHtmlAudio = null;
+        }
+      };
       const finish = () => {
         if (settled) return;
         settled = true;
+        cleanUp();
         resolve();
       };
       const fail = (error: unknown) => {
         if (settled) return;
         settled = true;
+        cleanUp();
         reject(error);
       };
 
       activeHtmlAudio = audio;
+      finishActiveHtmlAudio = finish;
       audio.playbackRate = audioSettings().playbackRate;
       audio.onended = finish;
       audio.onpause = () => {
         if (runId !== narrationRun) finish();
       };
-      audio.onerror = () => fail(new Error("Narration needs attention. Please try again."));
+      audio.onerror = () => {
+        const mediaError = audio.error;
+        fail(
+          new Error(
+            mediaError == null
+              ? "HTML audio emitted an unknown playback error."
+              : `HTML audio failed with code ${mediaError.code}: ${mediaError.message || "No media error message."}`
+          )
+        );
+      };
       audio.play().catch(fail);
 
       if (runId !== narrationRun) {
@@ -720,6 +805,16 @@ export function ReaderExperience() {
         finish();
       }
     });
+  };
+
+  function stopActiveHtmlAudio() {
+    const audio = activeHtmlAudio;
+    const finish = finishActiveHtmlAudio;
+    activeHtmlAudio = null;
+    finishActiveHtmlAudio = null;
+    audio?.pause();
+    finish?.();
+  }
 
   const prefetchNextSentenceNarration = (
     currentReader: ReaderView,
@@ -734,7 +829,13 @@ export function ReaderExperience() {
       audioSettings().voiceId
     );
 
-    void narrationRepository.prefetchSentenceAudio(request).catch(() => undefined);
+    void narrationRepository.prefetchSentenceAudio(request).catch((error) => {
+      reportNarrationDevelopmentError(error, {
+        stage: "prefetch",
+        sentenceId: request.sentenceId,
+        voiceId: request.voiceId
+      });
+    });
   };
 
   const refreshLibrary = async () => {
@@ -1065,6 +1166,7 @@ export function ReaderExperience() {
         "--inspector-rail-width": `${inspectorRailWidth()}px`
       }}
     >
+      <ProductBar />
       <LibraryRail
         mode={libraryRailMode()}
         activeView={activeView()}
@@ -1128,7 +1230,10 @@ export function ReaderExperience() {
       >
         <section class="reader-surface" aria-label="Reader">
           <ReaderTopAppBar
-            bookTitle={reader().book.title}
+            chapterTitle={reader().chapter.title}
+            activeChapterId={reader().chapter.id}
+            chapters={reader().chapters}
+            sentenceCount={reader().sentences.length}
             onOpenSearch={() => setInspectorTab("search")}
             onOpenSettings={() => setInspectorTab("settings")}
           />
@@ -1161,7 +1266,7 @@ export function ReaderExperience() {
               aria-label={`${reader().chapter.title} text`}
               style={{ "font-size": `${readerContentFontSize()}px` }}
             >
-              <h1 class="article-title">{reader().book.title}</h1>
+              <h1 class="article-title">{reader().chapter.title}</h1>
               <Show when={visibleSentenceRange().hiddenBefore > 0}>
                 <button
                   class="sentence-window-jump"
@@ -1189,7 +1294,10 @@ export function ReaderExperience() {
                     onUnregisterSentence={(sentenceId) => {
                       sentenceElements.delete(sentenceId);
                     }}
-                    onSelectSentence={selectSentence}
+                    onSelectSentence={(sentenceIndex) => {
+                      selectSentence(sentenceIndex);
+                      setInspectorTab("bookmarks");
+                    }}
                     onSelectWord={selectWord}
                     onClearWord={() => setSelectedWord(null)}
                     onSaveWord={saveDictionaryWord}
@@ -1218,6 +1326,7 @@ export function ReaderExperience() {
           readerSearchResults={readerSearchResults()}
           bookmarks={currentBookBookmarks()}
           activeBookmark={activeBookmark()}
+          activeSentence={activeSentence() ?? null}
           bookmarkNotice={bookmarkNotice()}
           audioSettings={audioSettings()}
           readerContentFontSize={readerContentFontSize()}
@@ -1252,9 +1361,10 @@ export function ReaderExperience() {
         />
 
         <PlaybackRail
-          bookTitle={reader().book.title}
-          author={reader().book.author}
-          coverImageSrc={reader().book.coverImageSrc}
+          chapterNumber={Math.max(
+            1,
+            reader().chapters.findIndex((chapter) => chapter.id === reader().chapter.id) + 1
+          )}
           chapterTitle={reader().chapter.title}
           progress={readerProgress()}
           sentenceCount={reader().sentences.length}
