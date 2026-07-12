@@ -289,7 +289,7 @@ fn download_verified(
     drop(reader);
     drop(response);
 
-    let actual = format!("{:x}", hasher.finalize());
+    let actual = finalize_sha256(hasher);
     if actual != expected_sha256 {
         let _ = fs::remove_file(&temporary);
         return Err("The voice download did not pass its safety check. Please retry.".to_string());
@@ -507,7 +507,15 @@ fn file_sha256(path: &Path) -> Option<String> {
         }
         hasher.update(&buffer[..count]);
     }
-    Some(format!("{:x}", hasher.finalize()))
+    Some(finalize_sha256(hasher))
+}
+
+fn finalize_sha256(hasher: Sha256) -> String {
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn emit_progress(
