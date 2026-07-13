@@ -50,6 +50,12 @@ The native `narration_cache` module owns V3 prepared narration assets. A cache e
 sentence sample timelines before saving or reading, tracks asset count, covered sentence count, and
 audio bytes, and keeps model revisions separated through asset identity.
 
+The native `narration_manifest` command is the desktop boundary for future Kokoro and Supertonic
+preparation. It accepts engine-independent passage requests, builds deterministic asset identity
+from engine, voice, model revision, source text, and synthesis parameters, and stores prepared
+audio in the V3 cache. Until real model adapters land, it writes validated silent manifests so the
+IPC and cache contract can be exercised without shipping unfinished inference.
+
 `KokoroNarrationAdapter` owns the engine-independent English passage contract. It accepts only
 confidently English requests, asks an injected engine for paragraph synthesis, maps timed Kokoro
 tokens back to Sonelle sentence IDs with monotonic punctuation-tolerant alignment, validates the

@@ -5,6 +5,10 @@ use crate::audio::{
     stop_narration, AudioCacheStats, PreparedSentenceAudio, SentenceAudioRequest,
 };
 use crate::epub_import::import_epub_file;
+use crate::narration_manifest::{
+    prepare_manifest_narration as prepare_manifest_narration_asset, ManifestNarrationRequest,
+    PreparedManifestNarration,
+};
 use crate::storage::{
     BookExportView, BookmarkView, LibraryBookView, LibrarySearchRequest, LibrarySearchResultView,
     ReaderDocumentView, RecordDomainEventRequest, SaveBookmarkRequest, SaveReadingPositionRequest,
@@ -44,6 +48,14 @@ pub async fn prepare_sentence_audio(
     request: SentenceAudioRequest,
 ) -> Result<PreparedSentenceAudio, String> {
     run_blocking(move || prepare_narration(&app, request)).await
+}
+
+#[tauri::command]
+pub async fn prepare_manifest_narration(
+    app: AppHandle,
+    request: ManifestNarrationRequest,
+) -> Result<PreparedManifestNarration, String> {
+    run_blocking(move || prepare_manifest_narration_asset(&app, request)).await
 }
 
 #[tauri::command]

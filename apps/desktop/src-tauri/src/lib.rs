@@ -3,6 +3,7 @@ mod background_process;
 mod commands;
 mod epub_import;
 pub mod narration_cache;
+mod narration_manifest;
 pub mod narration_pack;
 mod storage;
 mod text;
@@ -39,6 +40,7 @@ pub fn run() {
             commands::list_bookmarks,
             commands::list_books,
             commands::open_book,
+            commands::prepare_manifest_narration,
             commands::prepare_sentence_audio,
             commands::record_domain_event,
             commands::report_development_error,
