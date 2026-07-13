@@ -26,9 +26,17 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 flate2 = "1"
+anyhow = "=1.0.103"
+hound = "=3.5.1"
+ndarray = { version = "=0.17.2", features = ["rayon"] }
+ort = "=2.0.0-rc.12"
+rand = "=0.8.7"
+rand_distr = "=0.4.3"
+regex = "=1.13.0"
 roxmltree = "0.21.1"
 rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
 sha2 = "0.11.0"
 tar = "0.4"
+unicode-normalization = "=0.1.25"
 ureq = "3.3.0"
 zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
