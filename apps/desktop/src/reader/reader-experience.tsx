@@ -62,6 +62,10 @@ import {
   reportNarrationDevelopmentError,
   toFriendlyNarrationError
 } from "../audio/narration-repository";
+import type {
+  EngineInstallationState,
+  NarrationEngineId
+} from "../audio/engine-installation-repository";
 import type { VoiceInstallationState } from "../audio/voice-installation-repository";
 import {
   resolveDroppedEpubPath,
@@ -103,6 +107,7 @@ import {
 } from "./reader-narration";
 import { lookupReaderWord } from "./reader-word-lookup";
 import { createReaderLibraryWorkflows } from "./reader-library-workflows";
+import { createReaderEngineInstallationWorkflow } from "./reader-engine-installation-workflow";
 import { createReaderVoiceInstallationWorkflow } from "./reader-voice-installation-workflow";
 import {
   createReaderExperienceDependencies,
@@ -123,6 +128,7 @@ const librarySearchDelayMs = 180;
 const playbackPositionSaveDelayMs = 2_500;
 const chapterTransitionDelayMs = 5_000;
 const narrationPlaybackFailureMessage = "We couldn't play this narration. Please try again.";
+const hybridNarrationEngineIds: readonly NarrationEngineId[] = ["kokoro", "supertonic"];
 
 type PositionSaveIntent = "immediate" | "playback";
 
@@ -143,6 +149,7 @@ export function ReaderExperience(props: ReaderExperienceProps) {
   const htmlAudioPlayer = dependencies.htmlAudioPlayer;
   const narrationSessionRoutingMode = dependencies.narrationSessionRoutingMode;
   const voiceInstallationRepository = dependencies.voiceInstallationRepository;
+  const engineInstallationRepository = dependencies.engineInstallationRepository;
   const libraryWorkflows = createReaderLibraryWorkflows({
     eventDispatcher,
     repository
@@ -191,6 +198,12 @@ export function ReaderExperience(props: ReaderExperienceProps) {
     progress: null,
     message: "Checking offline voice"
   });
+  const [engineInstallations, setEngineInstallations] = createSignal<
+    Record<NarrationEngineId, EngineInstallationState>
+  >({
+    kokoro: createCheckingEngineInstallation("kokoro"),
+    supertonic: createCheckingEngineInstallation("supertonic")
+  });
   const [audioCacheStats, setAudioCacheStats] = createSignal<AudioCacheStatsDto | null>(null);
   const [audioCacheNotice, setAudioCacheNotice] = createSignal<string | null>(null);
   const [exportNotice, setExportNotice] = createSignal<string | null>(null);
@@ -221,6 +234,19 @@ export function ReaderExperience(props: ReaderExperienceProps) {
     repository: voiceInstallationRepository,
     selectedVoiceId: () => audioSettings().voiceId,
     projectInstallation: setVoiceInstallation,
+    projectNotice: setNarrationNotice,
+    friendlyError: toFriendlyNarrationError
+  });
+  const engineInstallationWorkflow = createReaderEngineInstallationWorkflow({
+    eventDispatcher,
+    eventSink,
+    repository: engineInstallationRepository,
+    projectInstallation: (installation) => {
+      setEngineInstallations((current) => ({
+        ...current,
+        [installation.engineId]: installation
+      }));
+    },
     projectNotice: setNarrationNotice,
     friendlyError: toFriendlyNarrationError
   });
@@ -333,6 +359,7 @@ export function ReaderExperience(props: ReaderExperienceProps) {
     let disposed = false;
     let unlistenBookDrops: (() => void) | undefined;
     let stopVoiceInstallationWorkflow: (() => void) | undefined;
+    let stopEngineInstallationWorkflow: (() => void) | undefined;
     void refreshLibrary();
     void refreshAllBookmarks();
     void refreshAudioCacheStats();
@@ -351,6 +378,16 @@ export function ReaderExperience(props: ReaderExperienceProps) {
         stopVoiceInstallationWorkflow = stop;
       }
     });
+    if (narrationSessionRoutingMode === "hybrid-v1") {
+      void engineInstallationWorkflow.start().then((stop) => {
+        if (disposed) {
+          stop();
+        } else {
+          stopEngineInstallationWorkflow = stop;
+          void refreshEngineInstallations();
+        }
+      });
+    }
 
     window.addEventListener("keydown", handleShortcut);
     window.addEventListener("resize", clampSidebarWidthsToViewport);
@@ -360,6 +397,7 @@ export function ReaderExperience(props: ReaderExperienceProps) {
       window.removeEventListener("resize", clampSidebarWidthsToViewport);
       unlistenBookDrops?.();
       stopVoiceInstallationWorkflow?.();
+      stopEngineInstallationWorkflow?.();
     });
   });
   onCleanup(() => readingPositionScheduler.flush());
@@ -1009,6 +1047,16 @@ export function ReaderExperience(props: ReaderExperienceProps) {
     voiceInstallationWorkflow.request(audioSettings().voiceId);
   };
 
+  const requestEngineInstallation = (engineId: NarrationEngineId) => {
+    engineInstallationWorkflow.request(engineId);
+  };
+
+  const refreshEngineInstallations = async () => {
+    await Promise.all(
+      hybridNarrationEngineIds.map((engineId) => engineInstallationWorkflow.refresh(engineId))
+    );
+  };
+
   const clearAudioCache = async () => {
     try {
       narrationRepository.clearPrefetchedNarrations();
@@ -1503,6 +1551,8 @@ export function ReaderExperience(props: ReaderExperienceProps) {
           bookmarkNotice={bookmarkNotice()}
           audioSettings={audioSettings()}
           voiceInstallation={voiceInstallation()}
+          showOfflineNarrationFiles={narrationSessionRoutingMode === "hybrid-v1"}
+          engineInstallations={engineInstallations()}
           readerContentFontSize={readerContentFontSize()}
           audioCacheStats={audioCacheStats()}
           audioCacheNotice={audioCacheNotice()}
@@ -1521,6 +1571,8 @@ export function ReaderExperience(props: ReaderExperienceProps) {
           onDeleteBookmark={deleteBookmark}
           onAudioSettingsChange={updateAudioSettings}
           onInstallVoice={requestVoiceInstallation}
+          onInstallEngine={requestEngineInstallation}
+          onRefreshEngines={refreshEngineInstallations}
           onReaderContentFontSizeChange={updateReaderContentFontSize}
           onRefreshCache={refreshAudioCacheStats}
           onClearCache={clearAudioCache}
@@ -1561,4 +1613,15 @@ export function ReaderExperience(props: ReaderExperienceProps) {
       </Show>
     </main>
   );
+}
+
+function createCheckingEngineInstallation(engineId: NarrationEngineId): EngineInstallationState {
+  return {
+    engineId,
+    status: "preparing",
+    downloadSizeBytes: 0,
+    downloadedBytes: 0,
+    progress: null,
+    message: "Checking offline narration files"
+  };
 }

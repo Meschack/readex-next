@@ -36,6 +36,9 @@ export interface DomainEventPayloadMap {
   VoiceInstallationRequested: { voiceId: string };
   VoiceInstallationReady: { voiceId: string };
   VoiceInstallationFailed: { voiceId: string; reason: string };
+  OfflineNarrationFilesInstallationRequested: { engineId: string };
+  OfflineNarrationFilesInstallationReady: { engineId: string };
+  OfflineNarrationFilesInstallationFailed: { engineId: string; reason: string };
   PlaybackPositionChanged: {
     bookId: EntityId;
     chapterId: EntityId;

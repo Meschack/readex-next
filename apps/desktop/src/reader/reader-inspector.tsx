@@ -7,6 +7,10 @@ import {
 import { primaryDefinition, type SavedDictionaryEntry, type WordInsight } from "@sonelle/learning";
 import type { ReaderSearchResult } from "@sonelle/reader";
 import type { AudioCacheStatsDto } from "../audio/audio-cache-repository";
+import type {
+  EngineInstallationState,
+  NarrationEngineId
+} from "../audio/engine-installation-repository";
 import type { VoiceInstallationState } from "../audio/voice-installation-repository";
 import type { LibraryBookmarkDto } from "../library/book-repository";
 import { formatBytes } from "./reader-formatting";
@@ -37,6 +41,8 @@ interface ReaderInspectorProps {
   bookmarkNotice: string | null;
   audioSettings: AudioSettings;
   voiceInstallation: VoiceInstallationState;
+  showOfflineNarrationFiles: boolean;
+  engineInstallations: Record<NarrationEngineId, EngineInstallationState>;
   readerContentFontSize: number;
   audioCacheStats: AudioCacheStatsDto | null;
   audioCacheNotice: string | null;
@@ -53,6 +59,8 @@ interface ReaderInspectorProps {
   onDeleteBookmark: (bookmarkId: string) => void;
   onAudioSettingsChange: (settings: Partial<AudioSettings>) => void;
   onInstallVoice: () => void;
+  onInstallEngine: (engineId: NarrationEngineId) => void;
+  onRefreshEngines: () => void;
   onReaderContentFontSizeChange: (fontSize: number) => void;
   onRefreshCache: () => void;
   onClearCache: () => void;
@@ -121,12 +129,16 @@ export function ReaderInspector(props: ReaderInspectorProps) {
           <SettingsPanel
             audioSettings={props.audioSettings}
             voiceInstallation={props.voiceInstallation}
+            showOfflineNarrationFiles={props.showOfflineNarrationFiles}
+            engineInstallations={props.engineInstallations}
             readerContentFontSize={props.readerContentFontSize}
             audioCacheStats={props.audioCacheStats}
             audioCacheNotice={props.audioCacheNotice}
             exportNotice={props.exportNotice}
             onAudioSettingsChange={props.onAudioSettingsChange}
             onInstallVoice={props.onInstallVoice}
+            onInstallEngine={props.onInstallEngine}
+            onRefreshEngines={props.onRefreshEngines}
             onReaderContentFontSizeChange={props.onReaderContentFontSizeChange}
             onResetAudioSettings={() => props.onAudioSettingsChange(DEFAULT_AUDIO_SETTINGS)}
             onRefreshCache={props.onRefreshCache}
@@ -359,12 +371,16 @@ function BookmarkPanel(props: BookmarkPanelProps) {
 interface SettingsPanelProps {
   audioSettings: AudioSettings;
   voiceInstallation: VoiceInstallationState;
+  showOfflineNarrationFiles: boolean;
+  engineInstallations: Record<NarrationEngineId, EngineInstallationState>;
   readerContentFontSize: number;
   audioCacheStats: AudioCacheStatsDto | null;
   audioCacheNotice: string | null;
   exportNotice: string | null;
   onAudioSettingsChange: (settings: Partial<AudioSettings>) => void;
   onInstallVoice: () => void;
+  onInstallEngine: (engineId: NarrationEngineId) => void;
+  onRefreshEngines: () => void;
   onReaderContentFontSizeChange: (fontSize: number) => void;
   onResetAudioSettings: () => void;
   onRefreshCache: () => void;
@@ -422,6 +438,13 @@ function SettingsPanel(props: SettingsPanelProps) {
         installation={props.voiceInstallation}
         onInstall={props.onInstallVoice}
       />
+      <Show when={props.showOfflineNarrationFiles}>
+        <OfflineNarrationFilesPanel
+          installations={props.engineInstallations}
+          onInstall={props.onInstallEngine}
+          onRefresh={props.onRefreshEngines}
+        />
+      </Show>
       <div class="tool-card">
         <span class="inspector-section-title">Prepared audio</span>
         <p>
@@ -450,6 +473,108 @@ function SettingsPanel(props: SettingsPanelProps) {
           {(notice) => <p class="library-notice">{notice()}</p>}
         </Show>
       </div>
+    </section>
+  );
+}
+
+const offlineNarrationProfiles: Array<{
+  engineId: NarrationEngineId;
+  label: string;
+  description: string;
+}> = [
+  {
+    engineId: "kokoro",
+    label: "English narration",
+    description: "Best voice quality for English books"
+  },
+  {
+    engineId: "supertonic",
+    label: "Multilingual narration",
+    description: "Fallback voices for non-English books"
+  }
+];
+
+function OfflineNarrationFilesPanel(props: {
+  installations: Record<NarrationEngineId, EngineInstallationState>;
+  onInstall: (engineId: NarrationEngineId) => void;
+  onRefresh: () => void;
+}) {
+  return (
+    <div class="tool-card offline-narration-files-card">
+      <div class="voice-installation-heading">
+        <span class="inspector-section-title">Offline narration files</span>
+        <button class="mini-tool-button" type="button" onClick={props.onRefresh}>
+          Refresh
+        </button>
+      </div>
+      <div class="offline-narration-file-list">
+        <For each={offlineNarrationProfiles}>
+          {(profile) => (
+            <OfflineNarrationFileCard
+              installation={props.installations[profile.engineId]}
+              label={profile.label}
+              description={profile.description}
+              onInstall={() => props.onInstall(profile.engineId)}
+            />
+          )}
+        </For>
+      </div>
+    </div>
+  );
+}
+
+function OfflineNarrationFileCard(props: {
+  installation: EngineInstallationState;
+  label: string;
+  description: string;
+  onInstall: () => void;
+}) {
+  const isPreparing = () => props.installation.status === "preparing";
+  const isReady = () => props.installation.status === "ready";
+  const readinessLabel = () => {
+    if (isReady()) return "Ready";
+    if (isPreparing()) return "Preparing";
+    return "Not ready";
+  };
+  const actionLabel = () =>
+    props.installation.status === "failed" ? "Retry download" : "Download files";
+  const sizeLabel = () =>
+    props.installation.downloadSizeBytes > 0
+      ? ` · ${formatBytes(props.installation.downloadSizeBytes)}`
+      : "";
+
+  return (
+    <section classList={{ "offline-narration-file-card": true, ready: isReady() }}>
+      <div class="offline-narration-file-heading">
+        <span>
+          <strong>{props.label}</strong>
+          <small>{props.description}</small>
+        </span>
+        <span class="voice-readiness">{readinessLabel()}</span>
+      </div>
+      <p>{props.installation.message}</p>
+      <Show when={isPreparing()}>
+        <progress
+          aria-label={`Preparing ${props.label.toLowerCase()} files`}
+          max="100"
+          value={props.installation.progress ?? 0}
+        />
+        <Show when={props.installation.downloadSizeBytes > 0}>
+          <div class="voice-installation-progress-meta">
+            <strong>{props.installation.progress ?? 0}%</strong>
+            <span>
+              {formatBytes(props.installation.downloadedBytes)} /{" "}
+              {formatBytes(props.installation.downloadSizeBytes)}
+            </span>
+          </div>
+        </Show>
+      </Show>
+      <Show when={!isPreparing() && !isReady()}>
+        <button class="primary-tool-button" type="button" onClick={props.onInstall}>
+          {actionLabel()}
+          {sizeLabel()}
+        </button>
+      </Show>
     </section>
   );
 }
