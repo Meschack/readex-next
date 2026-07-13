@@ -79,28 +79,6 @@ jobs:
       - name: Check native shell
         run: cargo check --workspace --locked
 
-  marketing:
-    name: Verify product film
-    runs-on: ubuntu-22.04
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: lts/*
-
-      - name: Install dependencies
-        run: npm ci --prefix marketing/sonelle-promo-video
-
-      - name: Lint product film
-        run: npm --prefix marketing/sonelle-promo-video run lint
-
-      - name: Build product film
-        run: npm --prefix marketing/sonelle-promo-video run build
-
   bundle-linux:
     name: Build Linux desktop bundle
     runs-on: ubuntu-22.04
