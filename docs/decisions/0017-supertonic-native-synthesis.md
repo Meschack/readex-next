@@ -62,3 +62,8 @@ the next slice: adding the production Kokoro ONNX artifact and native Kokoro syn
 The current pinned ONNX Runtime static build requires the Linux bundle job to run on Ubuntu 24.04.
 Ubuntu 22.04 verification remains useful for non-linking checks, but release packaging must use the
 newer runner until Sonelle owns a lower-glibc ONNX Runtime build or a proven dynamic-loading bundle.
+
+The same static ONNX Runtime package does not provide a prebuilt `x86_64-apple-darwin` distribution.
+Until Sonelle owns a compatible Intel macOS runtime bundle or switches to a proven dynamic-loading
+strategy, release candidate and release packaging target macOS Apple Silicon, Linux x64, and Windows
+x64 only.
