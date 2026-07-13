@@ -2,6 +2,8 @@ mod audio;
 mod background_process;
 mod commands;
 mod epub_import;
+pub mod narration_cache;
+pub mod narration_pack;
 mod storage;
 mod text;
 mod voice_installation;

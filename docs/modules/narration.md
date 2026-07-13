@@ -6,6 +6,7 @@
 - engine-independent chapter outlines, paragraph passage construction, and engine routing
 - prepared narration, sentence-span validation, request identity, stale preparation cancellation, and
   manifest-aware narration-session orchestration
+- generic native narration-pack installation and V3 prepared audio/manifest cache primitives
 - versioned audio settings and per-language voice preference migration
 - deterministic passage and sentence-batch adapters for contract tests
 - the desktop adapter for native Piper preparation and playback
@@ -17,7 +18,7 @@
 - book-language detection and EPUB metadata extraction
 - persisted reader preferences
 - native decoded playback implementation details beyond the manifest-aware player interface
-- model inference, pack installation, and cache V3 storage, which remain native adapter concerns
+- model inference and engine-specific cache key construction, which remain native adapter concerns
 
 ## Interface
 
@@ -34,6 +35,17 @@ manifest facts into narration lifecycle domain events. The session receives outp
 only passes playback rate and volume to the player; auto-advance remains session policy. The
 manifest-aware player receives prepared assets and emits sentence-entry observations without
 knowing about reader state, settings persistence, or voice installation.
+
+The native `narration_pack` module owns generic installed-pack preparation for future Kokoro and
+Supertonic artifacts. It verifies every artifact by SHA-256, installs into a temporary directory,
+writes a pack record only after all files are present, reuses ready packs, retries corrupt packs, and
+cleans partial downloads after interruption. Piper's current installer remains available for
+compatibility until the production catalog is switched to installed packs.
+
+The native `narration_cache` module owns V3 prepared narration assets. A cache entry stores
+`audio.wav` beside `manifest.json`, writes through a temporary directory, validates complete
+sentence sample timelines before saving or reading, tracks asset count, covered sentence count, and
+audio bytes, and keeps model revisions separated through asset identity.
 
 `routeNarrationEngine` selects contextual Kokoro passages for English and bounded Supertonic
 sentence batches for supported non-English languages, using Supertonic's `na` mode when language is
@@ -89,6 +101,9 @@ the UI projection becomes an
 engine-independent outline without carrying Solid state into the audio module. Rust tests
 cover native request validation, cache behavior, the shared default voice catalog, platform
 selection, safe extraction, and verified voice files without making network requests.
+Native pack tests cover reuse, corruption retry, interrupted-download cleanup, progress projection,
+and unsafe path rejection. Native V3 cache tests cover atomic writes, invalid manifests, empty
+audio, model-revision separation, tampered metadata, statistics, and clearing.
 Desktop playback tests verify complete-buffer completion, persistent output routing, volume and
 speed changes, explicit stopping, playback failures, prepared-source cleanup, and HTML compatibility
 manifest playback.
