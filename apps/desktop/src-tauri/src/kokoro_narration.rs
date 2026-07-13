@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{fs, path::Path};
 
 use ndarray::{Array1, Array2};
 use ort::{session::Session, value::Value};
@@ -29,6 +29,32 @@ pub fn render_kokoro_prepared_input(
         .map_err(|_| "Sonelle couldn't open English narration files.".to_string())?;
 
     run_kokoro_session(&mut session, input)
+}
+
+pub fn load_kokoro_voice_style(
+    voice_path: &Path,
+    phoneme_count: usize,
+) -> Result<Vec<f32>, String> {
+    if phoneme_count == 0 {
+        return Err("English narration input is invalid.".to_string());
+    }
+
+    let bytes = fs::read(voice_path)
+        .map_err(|_| "Sonelle couldn't open the selected English narration voice.".to_string())?;
+    let row_bytes = 256 * 4;
+    if bytes.len() < row_bytes || bytes.len() % row_bytes != 0 {
+        return Err("English narration voice is invalid.".to_string());
+    }
+
+    let style_count = bytes.len() / row_bytes;
+    let style_index = phoneme_count.saturating_sub(1).min(style_count - 1);
+    let start = style_index * row_bytes;
+    let row = &bytes[start..start + row_bytes];
+
+    Ok(row
+        .chunks_exact(4)
+        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .collect())
 }
 
 fn run_kokoro_session(
@@ -83,11 +109,18 @@ fn validate_prepared_input(input: &KokoroPreparedInput) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use std::{env, fs, path::PathBuf};
+    use std::{
+        env, fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use serde::Deserialize;
 
-    use super::{render_kokoro_prepared_input, KokoroPreparedInput, KOKORO_SAMPLE_RATE};
+    use super::{
+        load_kokoro_voice_style, render_kokoro_prepared_input, KokoroPreparedInput,
+        KOKORO_SAMPLE_RATE,
+    };
 
     #[derive(Debug, Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -110,6 +143,38 @@ mod tests {
         .expect_err("short input should fail");
 
         assert_eq!(error, "English narration input is too long.");
+    }
+
+    #[test]
+    fn loads_voice_style_for_the_prepared_phoneme_length() {
+        let root = tempfile_root("kokoro-style");
+        let voice_path = root.join("voice.bin");
+        let mut bytes = Vec::new();
+        for value in [1.0_f32, 2.0] {
+            for _ in 0..256 {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        fs::write(&voice_path, bytes).expect("voice fixture should write");
+
+        let first = load_kokoro_voice_style(&voice_path, 1).expect("first style should load");
+        let second = load_kokoro_voice_style(&voice_path, 2).expect("second style should load");
+        let clamped = load_kokoro_voice_style(&voice_path, 99).expect("last style should load");
+
+        assert_eq!(first, vec![1.0; 256]);
+        assert_eq!(second, vec![2.0; 256]);
+        assert_eq!(clamped, vec![2.0; 256]);
+    }
+
+    #[test]
+    fn rejects_invalid_voice_style_files() {
+        let root = tempfile_root("kokoro-invalid-style");
+        let voice_path = root.join("voice.bin");
+        fs::write(&voice_path, [1_u8, 2, 3]).expect("voice fixture should write");
+
+        let error = load_kokoro_voice_style(&voice_path, 1).expect_err("invalid file should fail");
+
+        assert_eq!(error, "English narration voice is invalid.");
     }
 
     #[ignore = "runs the real Kokoro ONNX runtime against local spike assets"]
@@ -151,5 +216,17 @@ mod tests {
         assert_eq!(KOKORO_SAMPLE_RATE, 24_000);
         assert_eq!(rendered.samples.len(), fixture.expected_waveform_samples);
         assert_eq!(rendered.durations, fixture.expected_durations);
+    }
+
+    fn tempfile_root(name: &str) -> PathBuf {
+        let root = env::temp_dir().join(format!(
+            "sonelle-{name}-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time should move forward")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("temp root should exist");
+        root
     }
 }

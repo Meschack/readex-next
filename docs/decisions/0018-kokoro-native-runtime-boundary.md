@@ -21,6 +21,7 @@ fixture before the text preprocessing layer starts calling it.
 The `kokoro_narration` module owns prepared Kokoro model inference:
 
 - validating prepared input dimensions;
+- loading the selected Kokoro voice style row for a prepared phoneme length;
 - loading the Kokoro ONNX session;
 - passing `input_ids`, `style`, and `speed` into ONNX Runtime;
 - returning waveform samples and duration outputs.
@@ -29,7 +30,6 @@ It refuses to own:
 
 - English grapheme-to-phoneme conversion;
 - tokenization, punctuation normalization, or sentence splitting;
-- voice-pack decoding;
 - sentence-span projection;
 - cache writes, playback, or UI state.
 
@@ -44,6 +44,7 @@ No domain event is introduced by this slice. It is a native adapter boundary use
 
 ## Testing
 
-Portable tests cover invalid prepared input rejection and shared PCM WAV encoding. An ignored test
-runs the real Kokoro ONNX model against the pinned native fixture from the narration spike and checks
-both waveform sample count and duration output equality.
+Portable tests cover invalid prepared input rejection, voice style loading, invalid voice style
+files, and shared PCM WAV encoding. An ignored test runs the real Kokoro ONNX model against the
+pinned native fixture from the narration spike and checks both waveform sample count and duration
+output equality.
