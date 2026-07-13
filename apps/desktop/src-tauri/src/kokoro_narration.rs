@@ -1,7 +1,8 @@
-use std::{fs, path::Path};
+use std::{collections::BTreeMap, fs, path::Path};
 
 use ndarray::{Array1, Array2};
 use ort::{session::Session, value::Value};
+use serde::Deserialize;
 
 pub const KOKORO_SAMPLE_RATE: u32 = 24_000;
 
@@ -18,6 +19,11 @@ pub struct KokoroInferenceOutput {
     pub durations: Vec<i64>,
 }
 
+#[derive(Debug, Deserialize)]
+struct KokoroConfig {
+    vocab: BTreeMap<String, i64>,
+}
+
 pub fn render_kokoro_prepared_input(
     model_path: &Path,
     input: &KokoroPreparedInput,
@@ -29,6 +35,35 @@ pub fn render_kokoro_prepared_input(
         .map_err(|_| "Sonelle couldn't open English narration files.".to_string())?;
 
     run_kokoro_session(&mut session, input)
+}
+
+pub fn prepare_kokoro_input_from_phonemes(
+    config_path: &Path,
+    voice_path: &Path,
+    phonemes: &str,
+    speed: i32,
+) -> Result<KokoroPreparedInput, String> {
+    let config = load_kokoro_config(config_path)?;
+    let mut input_ids = phonemes
+        .chars()
+        .filter_map(|phoneme| config.vocab.get(&phoneme.to_string()).copied())
+        .collect::<Vec<_>>();
+    if input_ids.is_empty() {
+        return Err("English narration input is invalid.".to_string());
+    }
+    if input_ids.len() + 2 > 512 {
+        return Err("English narration input is too long.".to_string());
+    }
+
+    let style = load_kokoro_voice_style(voice_path, input_ids.len())?;
+    input_ids.insert(0, 0);
+    input_ids.push(0);
+
+    Ok(KokoroPreparedInput {
+        input_ids,
+        style,
+        speed,
+    })
 }
 
 pub fn load_kokoro_voice_style(
@@ -55,6 +90,12 @@ pub fn load_kokoro_voice_style(
         .chunks_exact(4)
         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
         .collect())
+}
+
+fn load_kokoro_config(config_path: &Path) -> Result<KokoroConfig, String> {
+    let bytes = fs::read(config_path)
+        .map_err(|_| "Sonelle couldn't open English narration files.".to_string())?;
+    serde_json::from_slice(&bytes).map_err(|_| "English narration files are invalid.".to_string())
 }
 
 fn run_kokoro_session(
@@ -118,8 +159,8 @@ mod tests {
     use serde::Deserialize;
 
     use super::{
-        load_kokoro_voice_style, render_kokoro_prepared_input, KokoroPreparedInput,
-        KOKORO_SAMPLE_RATE,
+        load_kokoro_voice_style, prepare_kokoro_input_from_phonemes, render_kokoro_prepared_input,
+        KokoroPreparedInput, KOKORO_SAMPLE_RATE,
     };
 
     #[derive(Debug, Deserialize)]
@@ -149,13 +190,7 @@ mod tests {
     fn loads_voice_style_for_the_prepared_phoneme_length() {
         let root = tempfile_root("kokoro-style");
         let voice_path = root.join("voice.bin");
-        let mut bytes = Vec::new();
-        for value in [1.0_f32, 2.0] {
-            for _ in 0..256 {
-                bytes.extend_from_slice(&value.to_le_bytes());
-            }
-        }
-        fs::write(&voice_path, bytes).expect("voice fixture should write");
+        write_voice_fixture(&voice_path, &[1.0, 2.0]);
 
         let first = load_kokoro_voice_style(&voice_path, 1).expect("first style should load");
         let second = load_kokoro_voice_style(&voice_path, 2).expect("second style should load");
@@ -164,6 +199,36 @@ mod tests {
         assert_eq!(first, vec![1.0; 256]);
         assert_eq!(second, vec![2.0; 256]);
         assert_eq!(clamped, vec![2.0; 256]);
+    }
+
+    #[test]
+    fn prepares_model_input_from_phonemes_and_voice_style() {
+        let root = tempfile_root("kokoro-input");
+        let config_path = root.join("config.json");
+        let voice_path = root.join("voice.bin");
+        fs::write(&config_path, r#"{"vocab":{"a":7,"b":8}}"#).expect("config fixture should write");
+        write_voice_fixture(&voice_path, &[1.0, 2.0]);
+
+        let input = prepare_kokoro_input_from_phonemes(&config_path, &voice_path, "ab", 1)
+            .expect("prepared input should build");
+
+        assert_eq!(input.input_ids, vec![0, 7, 8, 0]);
+        assert_eq!(input.style, vec![2.0; 256]);
+        assert_eq!(input.speed, 1);
+    }
+
+    #[test]
+    fn rejects_phonemes_without_known_vocab_entries() {
+        let root = tempfile_root("kokoro-empty-input");
+        let config_path = root.join("config.json");
+        let voice_path = root.join("voice.bin");
+        fs::write(&config_path, r#"{"vocab":{"a":7}}"#).expect("config fixture should write");
+        write_voice_fixture(&voice_path, &[1.0]);
+
+        let error = prepare_kokoro_input_from_phonemes(&config_path, &voice_path, "zz", 1)
+            .expect_err("empty mapped input should fail");
+
+        assert_eq!(error, "English narration input is invalid.");
     }
 
     #[test]
@@ -228,5 +293,15 @@ mod tests {
         ));
         fs::create_dir_all(&root).expect("temp root should exist");
         root
+    }
+
+    fn write_voice_fixture(path: &PathBuf, rows: &[f32]) {
+        let mut bytes = Vec::new();
+        for value in rows {
+            for _ in 0..256 {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        fs::write(path, bytes).expect("voice fixture should write");
     }
 }
