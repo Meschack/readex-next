@@ -3,6 +3,7 @@ mod background_process;
 mod commands;
 mod epub_import;
 pub mod narration_cache;
+mod narration_engine_pack;
 mod narration_manifest;
 pub mod narration_pack;
 mod storage;
@@ -36,7 +37,9 @@ pub fn run() {
             commands::delete_bookmark,
             commands::export_book_data,
             commands::get_audio_cache_stats,
+            commands::get_narration_engine_status,
             commands::import_epub,
+            commands::install_narration_engine,
             commands::list_bookmarks,
             commands::list_books,
             commands::open_book,

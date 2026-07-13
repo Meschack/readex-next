@@ -45,6 +45,11 @@ writes a pack record only after all files are present, reuses ready packs, retri
 cleans partial downloads after interruption. Piper's current installer remains available for
 compatibility until the production catalog is switched to installed packs.
 
+The native `narration_engine_pack` module turns the pinned Kokoro and Supertonic spike catalog into
+desktop installable engine packs. It exposes readiness and installation commands for the hybrid
+engines, stores verified model artifacts under the app data directory, and emits progress facts
+without asking reader UI code to know model repositories, revisions, or file hashes.
+
 The native `narration_cache` module owns V3 prepared narration assets. A cache entry stores
 `audio.wav` beside `manifest.json`, writes through a temporary directory, validates complete
 sentence sample timelines before saving or reading, tracks asset count, covered sentence count, and
@@ -142,6 +147,8 @@ Desktop playback tests cover manifest sample-range playback and scheduled senten
 Native pack tests cover reuse, corruption retry, interrupted-download cleanup, progress projection,
 and unsafe path rejection. Native V3 cache tests cover atomic writes, invalid manifests, empty
 audio, model-revision separation, tampered metadata, statistics, and clearing.
+Native engine-pack tests cover catalog projection, unavailable engine rejection, and readiness
+status from installed pack records.
 Desktop playback tests verify complete-buffer completion, persistent output routing, volume and
 speed changes, explicit stopping, playback failures, prepared-source cleanup, and HTML compatibility
 manifest playback.

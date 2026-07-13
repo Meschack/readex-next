@@ -5,6 +5,9 @@ use crate::audio::{
     stop_narration, AudioCacheStats, PreparedSentenceAudio, SentenceAudioRequest,
 };
 use crate::epub_import::import_epub_file;
+use crate::narration_engine_pack::{
+    engine_status, install_engine, NarrationEngineInstallationStatus,
+};
 use crate::narration_manifest::{
     prepare_manifest_narration as prepare_manifest_narration_asset, ManifestNarrationRequest,
     PreparedManifestNarration,
@@ -85,6 +88,22 @@ pub async fn install_narration_voice(
     voice_id: String,
 ) -> Result<NarrationVoiceInstallationStatus, String> {
     run_blocking(move || install_voice(&app, &voice_id)).await
+}
+
+#[tauri::command]
+pub async fn get_narration_engine_status(
+    app: AppHandle,
+    engine_id: String,
+) -> Result<NarrationEngineInstallationStatus, String> {
+    run_blocking(move || engine_status(&app, &engine_id)).await
+}
+
+#[tauri::command]
+pub async fn install_narration_engine(
+    app: AppHandle,
+    engine_id: String,
+) -> Result<NarrationEngineInstallationStatus, String> {
+    run_blocking(move || install_engine(&app, &engine_id)).await
 }
 
 #[tauri::command]
