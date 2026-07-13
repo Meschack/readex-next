@@ -956,6 +956,7 @@ svg {
 .result-list button,
 .primary-tool-button,
 .secondary-tool-button,
+.mini-tool-button,
 .mini-danger,
 .speed-grid button {
   background: var(--surface);
@@ -1044,6 +1045,81 @@ svg {
 }
 
 .voice-installation-card .primary-tool-button {
+  width: 100%;
+}
+
+.mini-tool-button {
+  background: transparent;
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 850;
+  min-height: 30px;
+  padding: 0 10px;
+}
+
+.offline-narration-files-card {
+  display: grid;
+  gap: 12px;
+}
+
+.offline-narration-file-list {
+  display: grid;
+  gap: 10px;
+}
+
+.offline-narration-file-card {
+  background: rgba(255, 255, 255, 0.58);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.offline-narration-file-card.ready {
+  background: var(--green-soft);
+  border-color: rgba(21, 63, 52, 0.24);
+}
+
+.offline-narration-file-card.ready .voice-readiness {
+  color: var(--green);
+}
+
+.offline-narration-file-heading {
+  align-items: start;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.offline-narration-file-heading span:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.offline-narration-file-heading strong {
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.offline-narration-file-heading small,
+.offline-narration-file-card p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.offline-narration-file-card progress {
+  accent-color: var(--green);
+  height: 8px;
+  width: 100%;
+}
+
+.offline-narration-file-card .primary-tool-button {
   width: 100%;
 }
 

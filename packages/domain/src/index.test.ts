@@ -71,6 +71,26 @@ describe("domain event dispatcher", () => {
     expect(reactions).toEqual(["requested:en_US-amy-medium", "ready:en_US-amy-medium"]);
   });
 
+  it("represents offline narration files as a domain lifecycle", async () => {
+    const dispatcher = createDomainEventDispatcher();
+    const reactions: string[] = [];
+    dispatcher.subscribe("OfflineNarrationFilesInstallationRequested", (event) => {
+      reactions.push(`requested:${event.payload.engineId}`);
+    });
+    dispatcher.subscribe("OfflineNarrationFilesInstallationReady", (event) => {
+      reactions.push(`ready:${event.payload.engineId}`);
+    });
+
+    await dispatcher.dispatch(
+      createDomainEvent("OfflineNarrationFilesInstallationRequested", { engineId: "kokoro" })
+    );
+    await dispatcher.dispatch(
+      createDomainEvent("OfflineNarrationFilesInstallationReady", { engineId: "kokoro" })
+    );
+
+    expect(reactions).toEqual(["requested:kokoro", "ready:kokoro"]);
+  });
+
   it("runs independent reactions and supports unsubscribing", async () => {
     const dispatcher = createDomainEventDispatcher();
     const reactions: string[] = [];
