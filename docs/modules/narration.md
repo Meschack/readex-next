@@ -107,6 +107,10 @@ The reader projects manifest playback events through `projectNarrationEventToPla
 highlight and transport state driven by domain facts rather than by engine/cache details in Solid
 components.
 
+Desktop manifest playback starts prepared passage audio at the requested sentence sample offset and
+stops at the requested sentence or passage boundary, so paragraph-level assets can still drive
+sentence-level reader state.
+
 ## Tests
 
 Package tests cover passage splitting, manifest validation, routing, catalog integrity, settings
@@ -121,6 +125,7 @@ preparation, repeated cache hits, per-sentence fallback after invalid alignment,
 request rejection.
 Reader playback tests cover projection of manifest narration events into active sentence and
 transport state.
+Desktop playback tests cover manifest sample-range playback and scheduled sentence-entry callbacks.
 Native pack tests cover reuse, corruption retry, interrupted-download cleanup, progress projection,
 and unsafe path rejection. Native V3 cache tests cover atomic writes, invalid manifests, empty
 audio, model-revision separation, tampered metadata, statistics, and clearing.

@@ -83,6 +83,36 @@ describe("sentence audio player", () => {
     expect(output.disconnect).not.toHaveBeenCalled();
   });
 
+  it("starts decoded playback at the requested offset and duration", async () => {
+    const source = createBufferSourceDouble();
+    const output = {
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      gain: { value: 1 }
+    } as unknown as GainNode;
+    const context = {
+      createBufferSource: vi.fn().mockReturnValue(source),
+      createGain: vi.fn().mockReturnValue(output),
+      decodeAudioData: vi.fn().mockResolvedValue({}),
+      destination: {},
+      resume: vi.fn().mockResolvedValue(undefined),
+      state: "running"
+    } as unknown as AudioContext;
+    const createPlayback = createAudioBufferPlaybackFactory({ createContext: () => context });
+
+    const playback = await createPlayback({
+      url: "blob:audio",
+      data: new ArrayBuffer(4),
+      dispose: vi.fn()
+    });
+    await playback.start(
+      { ended: vi.fn(), failed: vi.fn() },
+      { offsetSeconds: 1.25, durationSeconds: 2.5 }
+    );
+
+    expect(source.start).toHaveBeenCalledWith(0, 1.25, 2.5);
+  });
+
   it("waits for decoded playback to consume the complete audio buffer", async () => {
     const decoded = createPlaybackDouble();
     const disposeSource = vi.fn();
