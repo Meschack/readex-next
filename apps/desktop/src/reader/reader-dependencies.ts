@@ -24,6 +24,10 @@ import {
 } from "../audio/audio-settings-repository";
 import { createHtmlAudioPlayer, type HtmlAudioPlayer } from "../audio/html-audio-player";
 import { createHtmlManifestNarrationPlayer } from "../audio/html-manifest-narration-player";
+import {
+  createEngineInstallationRepository,
+  type EngineInstallationRepository
+} from "../audio/engine-installation-repository";
 import { createNativeManifestNarrationAdapter } from "../audio/native-manifest-narration-adapter";
 import { createNarrationRepository } from "../audio/narration-repository";
 import {
@@ -51,6 +55,7 @@ export interface ReaderExperienceDependencies {
   audioSettingsRepository: AudioSettingsRepository;
   bookRepository: BookRepository;
   dictionaryRepository: DictionaryRepository;
+  engineInstallationRepository: EngineInstallationRepository;
   eventDispatcher: DomainEventDispatcher;
   eventSink: EventSink;
   htmlAudioPlayer: HtmlAudioPlayer;
@@ -79,6 +84,7 @@ export function createReaderExperienceDependencies(): ReaderExperienceDependenci
     audioSettingsRepository: createAudioSettingsRepository(),
     bookRepository: createBookRepository(),
     dictionaryRepository: createDictionaryRepository(),
+    engineInstallationRepository: createEngineInstallationRepository(),
     eventDispatcher,
     eventSink: createDomainEventSink(),
     htmlAudioPlayer,

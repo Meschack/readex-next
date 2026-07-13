@@ -129,6 +129,10 @@ Setting `VITE_SONELLE_NARRATION_SESSION=hybrid-v1` uses the desktop native manif
 Kokoro and Supertonic routes, allowing the new cache and IPC boundary to be tested before real
 model inference is wired in.
 
+The desktop `EngineInstallationRepository` mirrors the voice-installation repository for hybrid
+engine files. It projects native readiness and progress into app-friendly state so future settings
+or diagnostics UI can request Kokoro and Supertonic files without learning model-pack internals.
+
 ## Tests
 
 Package tests cover passage splitting, manifest validation, routing, catalog integrity, settings
