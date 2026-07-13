@@ -59,10 +59,7 @@ import {
   reportNarrationDevelopmentError,
   toFriendlyNarrationError
 } from "../audio/narration-repository";
-import {
-  failedVoiceInstallation,
-  type VoiceInstallationState
-} from "../audio/voice-installation-repository";
+import type { VoiceInstallationState } from "../audio/voice-installation-repository";
 import {
   resolveDroppedEpubPath,
   toFriendlyLibraryError,
@@ -100,6 +97,7 @@ import {
 import { createSentenceNarrationRequest } from "./reader-narration";
 import { lookupReaderWord } from "./reader-word-lookup";
 import { createReaderLibraryWorkflows } from "./reader-library-workflows";
+import { createReaderVoiceInstallationWorkflow } from "./reader-voice-installation-workflow";
 import {
   createReaderExperienceDependencies,
   type ReaderExperienceDependencies
@@ -174,8 +172,6 @@ export function ReaderExperience(props: ReaderExperienceProps) {
   const [isLibraryDropTarget, setIsLibraryDropTarget] = createSignal(false);
   const [playback, setPlayback] = createSignal(createPlaybackState());
   const [activeNarration, setActiveNarration] = createSignal<SentenceNarration | null>(null);
-  const [isPreparingNarration, setIsPreparingNarration] = createSignal(false);
-  const [isChapterTransitionPending, setIsChapterTransitionPending] = createSignal(false);
   const [narrationNotice, setNarrationNotice] = createSignal<string | null>(null);
   const [audioSettings, setAudioSettings] = createSignal<AudioSettings>(
     audioSettingsRepository.load()
@@ -207,10 +203,19 @@ export function ReaderExperience(props: ReaderExperienceProps) {
   let narrationRun = 0;
   let chapterTransitionRun = 0;
   let librarySearchRun = 0;
-  let voiceStatusRun = 0;
+  let lastAudibleVolume = audioSettings().volume > 0 ? audioSettings().volume : 1.2;
   let nextPositionSaveIntent: PositionSaveIntent | null = null;
   let readerSearchInput: HTMLInputElement | undefined;
   const sentenceElements = new Map<string, HTMLElement>();
+  const voiceInstallationWorkflow = createReaderVoiceInstallationWorkflow({
+    eventDispatcher,
+    eventSink,
+    repository: voiceInstallationRepository,
+    selectedVoiceId: () => audioSettings().voiceId,
+    projectInstallation: setVoiceInstallation,
+    projectNotice: setNarrationNotice,
+    friendlyError: toFriendlyNarrationError
+  });
 
   const activeSentence = createMemo(() => reader().sentences[playback().activeSentenceIndex]);
   const highlight = createMemo(() => highlightSentence(activeSentence()?.id ?? null));
@@ -297,17 +302,6 @@ export function ReaderExperience(props: ReaderExperienceProps) {
     );
   });
   const savedWords = createMemo(() => listSavedDictionaryEntries(savedDictionary()));
-  const narrationStatusLabel = createMemo(() => {
-    if (isChapterTransitionPending()) return "Next chapter soon";
-    if (voiceInstallation().status === "preparing") return "Preparing voice";
-    if (voiceInstallation().status !== "ready") return "Voice not downloaded";
-    if (isPreparingNarration()) return "Preparing audio";
-    if (narrationNotice() != null) return "Needs attention";
-    if (activeNarration()?.readiness === "ready") return "Ready to listen";
-
-    return reader().source === "sample" ? "Sample narration" : "Ready to listen";
-  });
-
   const dispatchEvent = (event: AnyDomainEvent) => {
     void eventDispatcher.dispatch(event).catch((error) => {
       if (import.meta.env.DEV) console.error("[sonelle][events] Event reaction failed.", error);
@@ -329,7 +323,7 @@ export function ReaderExperience(props: ReaderExperienceProps) {
   onMount(() => {
     let disposed = false;
     let unlistenBookDrops: (() => void) | undefined;
-    let unlistenVoiceInstallation: (() => void) | undefined;
+    let stopVoiceInstallationWorkflow: (() => void) | undefined;
     void refreshLibrary();
     void refreshAllBookmarks();
     void refreshAudioCacheStats();
@@ -341,19 +335,13 @@ export function ReaderExperience(props: ReaderExperienceProps) {
         unlistenBookDrops = unlisten;
       }
     });
-    void voiceInstallationRepository
-      .listen((installation) => {
-        if (installation.voiceId === audioSettings().voiceId) {
-          setVoiceInstallation(installation);
-        }
-      })
-      .then((unlisten) => {
-        if (disposed) {
-          unlisten();
-        } else {
-          unlistenVoiceInstallation = unlisten;
-        }
-      });
+    void voiceInstallationWorkflow.start().then((stop) => {
+      if (disposed) {
+        stop();
+      } else {
+        stopVoiceInstallationWorkflow = stop;
+      }
+    });
 
     window.addEventListener("keydown", handleShortcut);
     window.addEventListener("resize", clampSidebarWidthsToViewport);
@@ -362,7 +350,7 @@ export function ReaderExperience(props: ReaderExperienceProps) {
       window.removeEventListener("keydown", handleShortcut);
       window.removeEventListener("resize", clampSidebarWidthsToViewport);
       unlistenBookDrops?.();
-      unlistenVoiceInstallation?.();
+      stopVoiceInstallationWorkflow?.();
     });
   });
   onCleanup(() => readingPositionScheduler.flush());
@@ -370,12 +358,13 @@ export function ReaderExperience(props: ReaderExperienceProps) {
   createEffect(() => {
     const settings = audioSettings();
     htmlAudioPlayer.setPlaybackRate(settings.playbackRate);
+    htmlAudioPlayer.setVolume(settings.volume);
     audioSettingsRepository.save(settings);
   });
 
   createEffect(() => {
     const voiceId = audioSettings().voiceId;
-    void refreshVoiceInstallation(voiceId);
+    void voiceInstallationWorkflow.refresh(voiceId);
   });
 
   createEffect(() => {
@@ -451,7 +440,6 @@ export function ReaderExperience(props: ReaderExperienceProps) {
 
     onCleanup(() => {
       narrationRun += 1;
-      setIsPreparingNarration(false);
       stopActiveHtmlAudio();
       if (activeNarration()?.playbackMode === "native-speech") {
         void narrationRepository.stopPreparedSentenceAudio().catch((error) => {
@@ -472,12 +460,10 @@ export function ReaderExperience(props: ReaderExperienceProps) {
     const nextChapter = nextReaderChapter(currentReader.chapters, currentReader.chapter.id);
 
     if (currentPlayback.status !== "ended" || !audioSettings().autoAdvance || nextChapter == null) {
-      setIsChapterTransitionPending(false);
       return;
     }
 
     const runId = ++chapterTransitionRun;
-    setIsChapterTransitionPending(true);
 
     const timeoutId = window.setTimeout(() => {
       void openNextChapterAfterBreak(currentReader, nextChapter.id, runId);
@@ -486,7 +472,6 @@ export function ReaderExperience(props: ReaderExperienceProps) {
     onCleanup(() => {
       window.clearTimeout(timeoutId);
       chapterTransitionRun += 1;
-      setIsChapterTransitionPending(false);
     });
   });
 
@@ -656,6 +641,22 @@ export function ReaderExperience(props: ReaderExperienceProps) {
     setAudioSettings(nextAudioSettings);
   };
 
+  const updateVolume = (volume: number) => {
+    if (volume > 0) lastAudibleVolume = volume;
+    updateAudioSettings({ volume });
+  };
+
+  const toggleMute = () => {
+    const currentVolume = audioSettings().volume;
+    if (currentVolume > 0) {
+      lastAudibleVolume = currentVolume;
+      updateAudioSettings({ volume: 0 });
+      return;
+    }
+
+    updateAudioSettings({ volume: lastAudibleVolume });
+  };
+
   const updateReaderContentFontSize = (fontSize: number) => {
     setReaderContentFontSize(
       createReaderPreferences({ contentFontSize: fontSize }).contentFontSize
@@ -691,8 +692,6 @@ export function ReaderExperience(props: ReaderExperienceProps) {
     narrationRun += 1;
     chapterTransitionRun += 1;
     stopActiveHtmlAudio();
-    setIsPreparingNarration(false);
-    setIsChapterTransitionPending(false);
     setActiveNarration(null);
     setPlayback((current) => pausePlayback(current));
 
@@ -716,7 +715,6 @@ export function ReaderExperience(props: ReaderExperienceProps) {
       setPlayback(resolvePlayback);
       setActiveNarration(null);
       setNarrationNotice(null);
-      setIsPreparingNarration(false);
       setSelectedWord(null);
     });
     narrationRepository.clearPrefetchedNarrations();
@@ -762,7 +760,6 @@ export function ReaderExperience(props: ReaderExperienceProps) {
       );
       setActiveNarration(null);
       setNarrationNotice(null);
-      setIsPreparingNarration(false);
       setSelectedWord(null);
     });
     narrationRepository.clearPrefetchedNarrations();
@@ -872,7 +869,6 @@ export function ReaderExperience(props: ReaderExperienceProps) {
 
     const request = createSentenceNarrationRequest(currentReader, sentence, event.payload.voiceId);
     const runId = narrationRun;
-    setIsPreparingNarration(true);
     setNarrationNotice(null);
     await playSentenceNarration(request, runId, currentReader, activeSentenceIndex);
   };
@@ -952,54 +948,8 @@ export function ReaderExperience(props: ReaderExperienceProps) {
     }
   };
 
-  const refreshVoiceInstallation = async (voiceId: string) => {
-    const runId = ++voiceStatusRun;
-    try {
-      const installation = await voiceInstallationRepository.getStatus(voiceId);
-      if (runId === voiceStatusRun && voiceId === audioSettings().voiceId) {
-        setVoiceInstallation(installation);
-      }
-    } catch (error) {
-      if (runId === voiceStatusRun && voiceId === audioSettings().voiceId) {
-        setVoiceInstallation(failedVoiceInstallation(voiceId, toFriendlyNarrationError(error)));
-      }
-    }
-  };
-
   const requestVoiceInstallation = () => {
-    const voiceId = audioSettings().voiceId;
-    dispatchEvent(createDomainEvent("VoiceInstallationRequested", { voiceId }));
-  };
-
-  const prepareRequestedVoiceInstallation = async (
-    event: DomainEvent<"VoiceInstallationRequested">
-  ) => {
-    const { voiceId } = event.payload;
-    setVoiceInstallation((current) => ({
-      ...current,
-      voiceId,
-      status: "preparing",
-      downloadedBytes: 0,
-      progress: 0,
-      message: "Preparing this voice"
-    }));
-    setNarrationNotice(null);
-
-    try {
-      const installation = await voiceInstallationRepository.install(voiceId);
-      if (voiceId === audioSettings().voiceId) {
-        setVoiceInstallation(installation);
-      }
-      await eventDispatcher.dispatch(createDomainEvent("VoiceInstallationReady", { voiceId }));
-    } catch (error) {
-      const reason = toFriendlyNarrationError(error);
-      if (voiceId === audioSettings().voiceId) {
-        setVoiceInstallation(failedVoiceInstallation(voiceId, reason));
-      }
-      await eventDispatcher.dispatch(
-        createDomainEvent("VoiceInstallationFailed", { voiceId, reason })
-      );
-    }
+    voiceInstallationWorkflow.request(audioSettings().voiceId);
   };
 
   const clearAudioCache = async () => {
@@ -1051,8 +1001,6 @@ export function ReaderExperience(props: ReaderExperienceProps) {
     ) {
       return;
     }
-
-    setIsChapterTransitionPending(false);
 
     if (previousReader.source === "sample") {
       const nextReader = buildFixtureReaderView({ chapterId: nextChapterId, sentenceIndex: 0 });
@@ -1275,25 +1223,12 @@ export function ReaderExperience(props: ReaderExperienceProps) {
   };
 
   const subscriptions = [
-    eventDispatcher.subscribe("VoiceInstallationRequested", (event) => eventSink.append(event)),
-    eventDispatcher.subscribe("VoiceInstallationRequested", prepareRequestedVoiceInstallation),
-    eventDispatcher.subscribe("VoiceInstallationReady", (event) => eventSink.append(event)),
-    eventDispatcher.subscribe("VoiceInstallationReady", () => {
-      setNarrationNotice(null);
-    }),
-    eventDispatcher.subscribe("VoiceInstallationFailed", (event) => eventSink.append(event)),
-    eventDispatcher.subscribe("VoiceInstallationFailed", (event) => {
-      setNarrationNotice(event.payload.reason);
-    }),
     eventDispatcher.subscribe("AudioPreparationRequested", (event) => eventSink.append(event)),
     eventDispatcher.subscribe("AudioPreparationRequested", prepareRequestedNarration),
     eventDispatcher.subscribe("SentenceAudioReady", (event) => eventSink.append(event)),
-    eventDispatcher.subscribe("SentenceAudioReady", () => {
-      setIsPreparingNarration(false);
-    }),
+    eventDispatcher.subscribe("SentenceAudioReady", () => {}),
     eventDispatcher.subscribe("AudioPreparationFailed", (event) => eventSink.append(event)),
     eventDispatcher.subscribe("AudioPreparationFailed", (event) => {
-      setIsPreparingNarration(false);
       setNarrationNotice(event.payload.reason);
       setPlayback((current) => pausePlayback(current));
     }),
@@ -1541,21 +1476,21 @@ export function ReaderExperience(props: ReaderExperienceProps) {
         </Show>
 
         <PlaybackRail
-          chapterNumber={Math.max(
-            1,
-            reader().chapters.findIndex((chapter) => chapter.id === reader().chapter.id) + 1
-          )}
+          bookTitle={reader().book.title}
+          author={reader().book.author}
+          coverImageSrc={reader().book.coverImageSrc}
           chapterTitle={reader().chapter.title}
           progress={readerProgress()}
           sentenceCount={reader().sentences.length}
           status={playback().status}
-          narrationStatus={narrationStatusLabel()}
           bookmarked={activeBookmark() != null}
-          playbackRate={audioSettings().playbackRate}
+          volume={audioSettings().volume}
           onPrevious={() => moveSentence(-1)}
           onToggle={togglePlayback}
           onNext={() => moveSentence(1)}
           onToggleBookmark={() => void toggleActiveBookmark()}
+          onVolumeChange={updateVolume}
+          onToggleMute={toggleMute}
         />
       </Show>
     </main>

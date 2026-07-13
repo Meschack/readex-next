@@ -17,6 +17,9 @@ describe("playable Tauri audio sources", () => {
     expect(createObjectUrl.mock.calls[0]?.[0]).toBeInstanceOf(Blob);
     expect(createObjectUrl.mock.calls[0]?.[0].type).toBe("audio/wav");
     expect(source.url).toBe("blob:sonelle-narration");
+    expect(new Uint8Array(source.data ?? new ArrayBuffer(0))).toEqual(
+      new Uint8Array([82, 73, 70, 70])
+    );
 
     source.dispose();
     source.dispose();

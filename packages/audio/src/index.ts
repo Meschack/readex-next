@@ -31,6 +31,7 @@ export interface NarrationVoice {
 
 export interface AudioSettings {
   playbackRate: number;
+  volume: number;
   autoAdvance: boolean;
   voiceId: string;
 }
@@ -138,6 +139,7 @@ export const SUPPORTED_NARRATION_VOICES =
 
 export const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
   playbackRate: 0.9,
+  volume: 1.2,
   voiceId: DEFAULT_NARRATION_VOICE_ID,
   autoAdvance: true
 };
@@ -145,6 +147,7 @@ export const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
 export function createAudioSettings(input: Partial<AudioSettings> = {}): AudioSettings {
   return {
     playbackRate: clampPlaybackRate(input.playbackRate ?? DEFAULT_AUDIO_SETTINGS.playbackRate),
+    volume: clampVolume(input.volume ?? DEFAULT_AUDIO_SETTINGS.volume),
     voiceId: normalizeNarrationVoiceId(input.voiceId),
     autoAdvance: input.autoAdvance ?? DEFAULT_AUDIO_SETTINGS.autoAdvance
   };
@@ -206,6 +209,11 @@ export function resolveNarrationVoiceForLanguage(
 function clampPlaybackRate(rate: number): number {
   if (!Number.isFinite(rate)) return DEFAULT_AUDIO_SETTINGS.playbackRate;
   return Math.min(1.5, Math.max(0.75, rate));
+}
+
+function clampVolume(volume: number): number {
+  if (!Number.isFinite(volume)) return DEFAULT_AUDIO_SETTINGS.volume;
+  return Math.min(1.5, Math.max(0, volume));
 }
 
 function normalizeNarrationVoiceId(voiceId: string | undefined): string {

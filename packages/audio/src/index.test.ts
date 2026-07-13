@@ -44,11 +44,13 @@ describe("sentence narration", () => {
   it("keeps audio settings inside supported playback behavior", () => {
     expect(createAudioSettings({ playbackRate: 8, autoAdvance: false })).toEqual({
       playbackRate: 1.5,
+      volume: 1.2,
       voiceId: DEFAULT_NARRATION_VOICE_ID,
       autoAdvance: false
     });
     expect(parseAudioSettings("{nope")).toEqual({
       playbackRate: 0.9,
+      volume: 1.2,
       voiceId: DEFAULT_NARRATION_VOICE_ID,
       autoAdvance: true
     });
@@ -56,20 +58,25 @@ describe("sentence narration", () => {
       parseAudioSettings(
         serializeAudioSettings({
           playbackRate: 0.9,
+          volume: 0.75,
           voiceId: "en_GB-alba-medium",
           autoAdvance: false
         })
       )
     ).toEqual({
       playbackRate: 0.9,
+      volume: 0.75,
       voiceId: "en_GB-alba-medium",
       autoAdvance: false
     });
     expect(createAudioSettings({ voiceId: "nope" })).toEqual({
       playbackRate: 0.9,
+      volume: 1.2,
       voiceId: DEFAULT_NARRATION_VOICE_ID,
       autoAdvance: true
     });
+    expect(createAudioSettings({ volume: -4 }).volume).toBe(0);
+    expect(createAudioSettings({ volume: 8 }).volume).toBe(1.5);
   });
 
   it("matches the persisted voice to the active book language", () => {

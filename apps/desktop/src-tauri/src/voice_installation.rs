@@ -21,6 +21,43 @@ const INSTALLATION_PROGRESS_EVENT: &str = "narration-voice-installation-progress
 
 static VOICE_INSTALLATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
+trait VoiceDownloadClient {
+    fn stream(
+        &self,
+        url: &str,
+        on_chunk: &mut dyn FnMut(&[u8]) -> Result<(), String>,
+    ) -> Result<(), String>;
+}
+
+struct NativeVoiceDownloadClient;
+
+impl VoiceDownloadClient for NativeVoiceDownloadClient {
+    fn stream(
+        &self,
+        url: &str,
+        on_chunk: &mut dyn FnMut(&[u8]) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let mut response = ureq::get(url)
+            .header("User-Agent", "Sonelle voice installer")
+            .call()
+            .map_err(|_| {
+                "The voice couldn't be downloaded. Check your connection and retry.".to_string()
+            })?;
+        let mut reader = response.body_mut().as_reader();
+        let mut buffer = [0_u8; 64 * 1024];
+
+        loop {
+            let count = reader
+                .read(&mut buffer)
+                .map_err(|_| "The voice download was interrupted. Please retry.".to_string())?;
+            if count == 0 {
+                return Ok(());
+            }
+            on_chunk(&buffer[..count])?;
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct VoiceCatalog {
@@ -308,13 +345,31 @@ fn download_verified(
     message: &str,
     progress: &mut InstallationProgress,
 ) -> Result<(), String> {
+    let downloaded = download_verified_file(
+        &NativeVoiceDownloadClient,
+        url,
+        destination,
+        expected_sha256,
+        &mut |downloaded| {
+            progress.emit(app, voice_id, "downloading", message, downloaded);
+        },
+    )?;
+    progress.complete(downloaded);
+    progress.emit(app, voice_id, "downloading", message, 0);
+    Ok(())
+}
+
+fn download_verified_file(
+    client: &dyn VoiceDownloadClient,
+    url: &str,
+    destination: &Path,
+    expected_sha256: &str,
+    on_progress: &mut dyn FnMut(u64),
+) -> Result<u64, String> {
     if destination.exists() && file_sha256(destination).as_deref() == Some(expected_sha256) {
-        let downloaded_bytes = fs::metadata(destination)
+        return Ok(fs::metadata(destination)
             .map(|metadata| metadata.len())
-            .unwrap_or(0);
-        progress.complete(downloaded_bytes);
-        progress.emit(app, voice_id, "downloading", message, 0);
-        return Ok(());
+            .unwrap_or(0));
     }
 
     let temporary = destination.with_extension(format!(
@@ -329,39 +384,29 @@ fn download_verified(
         let _ = fs::remove_file(&temporary);
     }
 
-    let mut response = ureq::get(url)
-        .header("User-Agent", "Sonelle voice installer")
-        .call()
-        .map_err(|_| {
-            "The voice couldn't be downloaded. Check your connection and retry.".to_string()
-        })?;
-    let mut reader = response.body_mut().as_reader();
     let mut output = File::create(&temporary)
         .map_err(|_| "Sonelle couldn't save the voice download.".to_string())?;
     let mut hasher = Sha256::new();
     let mut downloaded = 0_u64;
-    let mut buffer = [0_u8; 64 * 1024];
 
-    loop {
-        let count = reader
-            .read(&mut buffer)
-            .map_err(|_| "The voice download was interrupted. Please retry.".to_string())?;
-        if count == 0 {
-            break;
-        }
+    let stream_result = client.stream(url, &mut |chunk| {
         output
-            .write_all(&buffer[..count])
+            .write_all(chunk)
             .map_err(|_| "Sonelle couldn't save the voice download.".to_string())?;
-        hasher.update(&buffer[..count]);
-        downloaded += count as u64;
-        progress.emit(app, voice_id, "downloading", message, downloaded);
+        hasher.update(chunk);
+        downloaded += chunk.len() as u64;
+        on_progress(downloaded);
+        Ok(())
+    });
+    if let Err(error) = stream_result {
+        drop(output);
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
     }
     output
         .flush()
         .map_err(|_| "Sonelle couldn't save the voice download.".to_string())?;
     drop(output);
-    drop(reader);
-    drop(response);
 
     let actual = finalize_sha256(hasher);
     if actual != expected_sha256 {
@@ -375,9 +420,7 @@ fn download_verified(
     }
     fs::rename(&temporary, destination)
         .map_err(|_| "Sonelle couldn't finish saving the voice.".to_string())?;
-    progress.complete(downloaded);
-    progress.emit(app, voice_id, "downloading", message, 0);
-    Ok(())
+    Ok(downloaded)
 }
 
 fn extract_runtime(
@@ -620,11 +663,32 @@ fn emit_progress(
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_runtime, file_sha256, runtime_download, voice_urls, InstallationProgress,
-        RuntimeArchiveKind,
+        download_verified_file, extract_runtime, file_sha256, runtime_download, voice_urls,
+        InstallationProgress, RuntimeArchiveKind, VoiceDownloadClient,
     };
     use std::{fs, io::Write, path::PathBuf, time::SystemTime};
     use zip::{write::SimpleFileOptions, ZipWriter};
+
+    struct FakeDownloadClient {
+        chunks: Vec<Vec<u8>>,
+        failure: Option<String>,
+    }
+
+    impl VoiceDownloadClient for FakeDownloadClient {
+        fn stream(
+            &self,
+            _url: &str,
+            on_chunk: &mut dyn FnMut(&[u8]) -> Result<(), String>,
+        ) -> Result<(), String> {
+            for chunk in &self.chunks {
+                on_chunk(chunk)?;
+            }
+            match &self.failure {
+                Some(error) => Err(error.clone()),
+                None => Ok(()),
+            }
+        }
+    }
 
     #[test]
     fn builds_catalog_voice_urls() {
@@ -669,6 +733,57 @@ mod tests {
             Some("8328d302e64b688068affcad021367dad44992236ca84add38713735f9a9a1f0")
         );
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn streams_verified_downloads_into_their_final_destination() {
+        let root = test_path("verified-download");
+        fs::create_dir_all(&root).expect("create fixture folder");
+        let destination = root.join("voice.onnx");
+        let client = FakeDownloadClient {
+            chunks: vec![b"Son".to_vec(), b"elle".to_vec()],
+            failure: None,
+        };
+        let mut progress = Vec::new();
+
+        let bytes = download_verified_file(
+            &client,
+            "https://example.invalid/voice",
+            &destination,
+            "8328d302e64b688068affcad021367dad44992236ca84add38713735f9a9a1f0",
+            &mut |downloaded| progress.push(downloaded),
+        )
+        .expect("verified download");
+
+        assert_eq!(bytes, 7);
+        assert_eq!(progress, vec![3, 7]);
+        assert_eq!(fs::read(&destination).expect("installed voice"), b"Sonelle");
+        assert!(!root.join("voice.onnx.download").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn removes_partial_files_when_a_download_is_interrupted() {
+        let root = test_path("interrupted-download");
+        fs::create_dir_all(&root).expect("create fixture folder");
+        let destination = root.join("voice.onnx");
+        let client = FakeDownloadClient {
+            chunks: vec![b"partial".to_vec()],
+            failure: Some("connection lost".to_string()),
+        };
+
+        let result = download_verified_file(
+            &client,
+            "https://example.invalid/voice",
+            &destination,
+            "unused",
+            &mut |_| {},
+        );
+
+        assert_eq!(result.expect_err("download should fail"), "connection lost");
+        assert!(!destination.exists());
+        assert!(!root.join("voice.onnx.download").exists());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

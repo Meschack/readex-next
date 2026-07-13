@@ -6,6 +6,7 @@ interface PlayableAudioSourceDependencies {
 
 export interface PlayableAudioSource {
   url: string;
+  data?: ArrayBuffer;
   dispose: () => void;
 }
 
@@ -23,7 +24,8 @@ export async function createPlayableAudioSource(
     throw new Error("We couldn't open prepared narration. Please try again.");
   }
 
-  const audioBlob = new Blob([await response.arrayBuffer()], { type: "audio/wav" });
+  const data = await response.arrayBuffer();
+  const audioBlob = new Blob([data], { type: "audio/wav" });
   const createObjectUrl = dependencies.createObjectUrl ?? URL.createObjectURL;
   const revokeObjectUrl = dependencies.revokeObjectUrl ?? URL.revokeObjectURL;
   const playableUrl = createObjectUrl(audioBlob);
@@ -31,6 +33,7 @@ export async function createPlayableAudioSource(
 
   return {
     url: playableUrl,
+    data,
     dispose: () => {
       if (disposed) return;
       disposed = true;

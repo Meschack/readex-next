@@ -3,12 +3,12 @@ import type { PlaybackStatus, ReaderProgress } from "@sonelle/reader";
 import type { ReaderChapterNavigationItem } from "./reader-view";
 import {
   BookmarkIcon,
-  HeadphonesIcon,
   NextIcon,
   PauseIcon,
   PlayIcon,
   PreviousIcon,
   SearchIcon,
+  SpeakerIcon,
   SettingsIcon
 } from "./reader-icons";
 
@@ -110,18 +110,21 @@ export function ChapterNavigator(props: ChapterNavigatorProps) {
 }
 
 interface PlaybackRailProps {
-  chapterNumber: number;
+  bookTitle: string;
+  author: string;
+  coverImageSrc: string | null;
   chapterTitle: string;
   progress: ReaderProgress;
   sentenceCount: number;
   status: PlaybackStatus;
-  narrationStatus: string;
   bookmarked: boolean;
-  playbackRate: number;
+  volume: number;
   onPrevious: () => void;
   onToggle: () => void;
   onNext: () => void;
   onToggleBookmark: () => void;
+  onVolumeChange: (volume: number) => void;
+  onToggleMute: () => void;
 }
 
 export function PlaybackRail(props: PlaybackRailProps) {
@@ -133,6 +136,20 @@ export function PlaybackRail(props: PlaybackRailProps) {
   return (
     <footer class="audio-rail" aria-label="Playback controls">
       <div class="track-info">
+        <div class="book-cover player-cover">
+          <Show
+            when={props.coverImageSrc}
+            fallback={<span aria-hidden="true">{props.bookTitle.slice(0, 1).toUpperCase()}</span>}
+          >
+            {(source) => <img src={source()} alt={`${props.bookTitle} cover`} />}
+          </Show>
+        </div>
+        <div class="playback-copy">
+          <strong title={props.chapterTitle}>{props.chapterTitle}</strong>
+          <span title={props.author}>{props.author || "Unknown author"}</span>
+        </div>
+      </div>
+      <div class="transport-stack">
         <div class="transport-controls">
           <button
             class="icon-button"
@@ -164,25 +181,41 @@ export function PlaybackRail(props: PlaybackRailProps) {
             <NextIcon />
           </button>
         </div>
-        <div class="playback-copy">
-          <strong>
-            {props.status === "playing" ? "Playing" : "Paused on"} Chapter {props.chapterNumber}
-          </strong>
-          <span>
-            Sentence {props.progress.chapterSentenceNumber} of {props.progress.chapterSentenceCount}
-          </span>
-        </div>
-      </div>
-      <div class="transport-stack">
         <div class="audio-progress" aria-label="Reading progress">
+          <span>
+            {props.progress.chapterSentenceNumber} / {props.progress.chapterSentenceCount}
+          </span>
           <div class="progress-track" aria-hidden="true">
             <span style={{ width: `${props.progress.bookPercent}%` }} />
           </div>
+          <span>{Math.round(props.progress.bookPercent)}%</span>
         </div>
       </div>
       <div class="essential-actions">
-        <HeadphonesIcon />
-        <span class="narration-status">{props.narrationStatus}</span>
+        <div class="volume-control">
+          <button
+            classList={{ "volume-toggle": true, muted: props.volume === 0 }}
+            type="button"
+            aria-label={props.volume === 0 ? "Unmute narration" : "Mute narration"}
+            aria-pressed={props.volume === 0}
+            title={props.volume === 0 ? "Unmute narration" : "Mute narration"}
+            onClick={props.onToggleMute}
+          >
+            <SpeakerIcon />
+          </button>
+          <input
+            type="range"
+            min="0"
+            max="1.5"
+            step="0.05"
+            value={props.volume}
+            aria-label="Narration volume"
+            aria-valuetext={`${Math.round(props.volume * 100)} percent`}
+            title={`Narration volume: ${Math.round(props.volume * 100)}%`}
+            onInput={(event) => props.onVolumeChange(Number(event.currentTarget.value))}
+          />
+          <span>{Math.round(props.volume * 100)}%</span>
+        </div>
         <button
           classList={{
             "bookmark-toggle": true,
@@ -192,12 +225,11 @@ export function PlaybackRail(props: PlaybackRailProps) {
           aria-label={props.bookmarked ? "Remove bookmark" : "Bookmark sentence"}
           aria-pressed={props.bookmarked}
           disabled={props.sentenceCount === 0}
+          title={props.bookmarked ? "Remove bookmark" : "Bookmark sentence"}
           onClick={props.onToggleBookmark}
         >
           <BookmarkIcon />
         </button>
-        <span class="reading-percent">{Math.round(props.progress.bookPercent)}% read</span>
-        <span class="speed-label">{props.playbackRate.toFixed(1)}x</span>
       </div>
     </footer>
   );

@@ -4,7 +4,7 @@
   --library-rail-width: 300px;
   --reader-topbar-height: 76px;
   grid-template-columns: var(--library-rail-width) minmax(560px, 1fr) var(--inspector-rail-width);
-  grid-template-rows: 54px minmax(0, 1fr) 84px;
+  grid-template-rows: 54px minmax(0, 1fr) 96px;
   min-height: 680px;
 }
 
@@ -473,40 +473,54 @@
 }
 
 .audio-rail {
-  gap: 24px;
+  gap: 32px;
   grid-column: 1 / -1;
   grid-row: 3;
-  grid-template-columns: 330px minmax(180px, 1fr) 260px;
-  min-height: 84px;
-  padding: 0 28px;
+  grid-template-columns: minmax(210px, 0.85fr) minmax(320px, 1.3fr) minmax(230px, 0.85fr);
+  min-height: 96px;
+  padding: 10px 28px;
 }
 
 .track-info {
-  gap: 12px;
-  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  grid-template-columns: 42px minmax(0, 1fr);
 }
 
 .playback-copy {
   min-width: 0;
 }
 
-.track-info strong {
-  color: var(--green);
-  font-size: 14px;
-  font-weight: 700;
+.player-cover {
+  border-radius: 3px;
+  height: 60px;
+  width: 42px;
 }
 
-.track-info div > span {
+.player-cover > span {
+  font-size: 19px;
+}
+
+.track-info strong {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 760;
+  line-height: 1.25;
+}
+
+.playback-copy > span {
   font-size: 13px;
-  margin-top: 3px;
+  margin-top: 5px;
 }
 
 .transport-stack {
-  display: block;
+  display: grid;
+  gap: 7px;
+  justify-items: stretch;
 }
 
 .transport-controls {
-  gap: 2px;
+  gap: 12px;
+  justify-self: center;
 }
 
 .transport-controls > button,
@@ -516,29 +530,41 @@
 
 .audio-rail .icon-button {
   color: var(--muted);
-  height: 30px;
-  width: 26px;
+  height: 36px;
+  width: 36px;
 }
 
 .audio-rail .icon-button svg {
-  height: 15px;
-  width: 15px;
+  height: 20px;
+  width: 20px;
 }
 
 .audio-rail .play {
-  box-shadow: none;
-  height: 38px;
-  width: 38px;
+  box-shadow: 0 6px 18px rgba(21, 63, 52, 0.18);
+  height: 44px;
+  width: 44px;
 }
 
 .audio-rail .play svg {
-  height: 16px;
-  width: 16px;
+  height: 20px;
+  width: 20px;
 }
 
 .audio-progress {
-  display: block;
-  width: 100%;
+  gap: 10px;
+  grid-template-columns: 52px minmax(140px, 1fr) 42px;
+  justify-self: center;
+  width: min(100%, 560px);
+}
+
+.audio-progress > span {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.audio-progress > span:first-child {
+  text-align: right;
 }
 
 .progress-track {
@@ -547,38 +573,66 @@
 }
 
 .essential-actions {
-  gap: 11px;
-}
-
-.essential-actions > svg,
-.essential-actions > button,
-.reading-percent,
-.speed-label {
-  flex: 0 0 auto;
-}
-
-.essential-actions > svg {
-  color: var(--green);
-  height: 17px;
-  width: 17px;
+  gap: 14px;
 }
 
 .essential-actions .bookmark-toggle {
-  height: 30px;
-  width: 30px;
+  border-radius: 5px;
+  height: 38px;
+  width: 38px;
 }
 
-.reading-percent,
-.speed-label {
+.essential-actions .bookmark-toggle svg {
+  height: 21px;
+  width: 21px;
+}
+
+.volume-control {
+  align-items: center;
+  display: grid;
+  flex: 0 0 auto;
+  gap: 7px;
+  grid-template-columns: 34px minmax(72px, 120px) 42px;
+}
+
+.volume-control .volume-toggle {
+  border-radius: 5px;
   color: var(--muted);
-  font-size: 13px;
-  white-space: nowrap;
+  height: 34px;
+  padding: 0;
+  width: 34px;
 }
 
-.narration-status {
-  flex: 1 1 auto;
-  font-size: 13px;
+.volume-control .volume-toggle:hover,
+.volume-control .volume-toggle:focus-visible,
+.volume-control .volume-toggle.muted {
+  color: var(--green);
+}
+
+.volume-control .volume-toggle:focus-visible {
+  outline: 2px solid var(--green-2);
+  outline-offset: 1px;
+}
+
+.volume-control .volume-toggle svg {
+  height: 20px;
+  width: 20px;
+}
+
+.volume-control input[type="range"] {
+  accent-color: var(--green);
+  cursor: pointer;
+  height: 24px;
+  margin: 0;
   min-width: 0;
+  width: 100%;
+}
+
+.volume-control > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .reader-toast-region {
@@ -915,7 +969,7 @@
 @media (max-width: 1180px) {
   .sonelle-shell {
     grid-template-columns: 230px minmax(0, 1fr);
-    grid-template-rows: 54px minmax(0, 1fr) minmax(190px, 30vh) 84px;
+    grid-template-rows: 54px minmax(0, 1fr) minmax(190px, 30vh) 96px;
   }
 
   .product-bar {
@@ -951,7 +1005,15 @@
   .audio-rail {
     grid-column: 1 / -1;
     grid-row: 4;
-    grid-template-columns: 300px minmax(160px, 1fr) 220px;
+    grid-template-columns: minmax(200px, 0.8fr) minmax(300px, 1.3fr) minmax(210px, 0.8fr);
+  }
+
+  .volume-control > span {
+    display: none;
+  }
+
+  .volume-control {
+    grid-template-columns: 34px minmax(70px, 110px);
   }
 
   .library-workspace {
@@ -1115,29 +1177,39 @@
 
   .audio-rail {
     bottom: 0;
-    grid-template-columns: 1fr;
-    min-height: 74px;
+    gap: 10px 18px;
+    grid-template-areas:
+      "track actions"
+      "transport transport";
+    grid-template-columns: minmax(0, 1fr) auto;
+    min-height: 136px;
     padding: 12px 18px;
     position: sticky;
   }
 
-  .essential-actions {
-    display: none;
-  }
-
-  .reader-toast-region {
-    bottom: 90px;
-    left: 16px;
-    right: 16px;
-    width: auto;
-  }
-
   .track-info {
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-area: track;
   }
 
   .transport-stack {
-    display: block;
+    display: grid;
+    grid-area: transport;
+  }
+
+  .essential-actions {
+    grid-area: actions;
+    justify-content: end;
+  }
+
+  .volume-control {
+    grid-template-columns: 34px minmax(90px, 180px);
+  }
+
+  .reader-toast-region {
+    bottom: 152px;
+    left: 16px;
+    right: 16px;
+    width: auto;
   }
 
   .library-collection {
@@ -1177,6 +1249,39 @@
   .word-popover {
     left: 0;
     transform: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .audio-rail {
+    gap: 10px 12px;
+    padding-inline: 14px;
+  }
+
+  .player-cover {
+    height: 50px;
+    width: 35px;
+  }
+
+  .track-info {
+    gap: 10px;
+    grid-template-columns: 35px minmax(0, 1fr);
+  }
+
+  .track-info strong {
+    font-size: 14px;
+  }
+
+  .playback-copy > span {
+    font-size: 12px;
+  }
+
+  .volume-control {
+    grid-template-columns: 34px minmax(64px, 90px);
+  }
+
+  .audio-progress {
+    grid-template-columns: 46px minmax(100px, 1fr) 36px;
   }
 }
 

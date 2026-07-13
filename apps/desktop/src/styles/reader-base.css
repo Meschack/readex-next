@@ -1586,14 +1586,6 @@ svg {
   min-width: 0;
 }
 
-.narration-status {
-  color: var(--muted);
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .bookmark-toggle.active {
   color: var(--green);
 }
