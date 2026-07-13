@@ -4,7 +4,8 @@
 
 - voice catalog metadata and language-aware voice resolution
 - engine-independent chapter outlines, paragraph passage construction, and engine routing
-- prepared narration, sentence-span validation, request identity, and stale preparation cancellation
+- prepared narration, sentence-span validation, request identity, stale preparation cancellation, and
+  manifest-aware narration-session orchestration
 - versioned audio settings and per-language voice preference migration
 - deterministic passage and sentence-batch adapters for contract tests
 - the desktop adapter for native Piper preparation and playback
@@ -15,17 +16,24 @@
 - reader UI state, chapter navigation, or reading progress
 - book-language detection and EPUB metadata extraction
 - persisted reader preferences
-- decoded manifest-aware playback, which belongs to the Phase 2 player
+- native decoded playback implementation details beyond the manifest-aware player interface
 - model inference, pack installation, and cache V3 storage, which remain native adapter concerns
 
 ## Interface
 
-The current reader workflow still depends on `PrefetchingNarrationGateway` while Phase 2 is pending.
-New engine adapters implement `NarrationPreparationAdapter` and return `PreparedNarration` with a
-complete ordered sample timeline. `createNarrationPassages` preserves paragraph boundaries and only
-splits oversized passages between existing Sonelle sentences. `validatePreparedNarration` rejects
-missing, reordered, overlapping, gapped, or out-of-range sentence spans before they can drive the
-reader.
+The current reader workflow still depends on `PrefetchingNarrationGateway` while production native
+Kokoro and Supertonic adapters are pending. New engine adapters implement
+`NarrationPreparationAdapter` and return `PreparedNarration` with a complete ordered sample
+timeline. `createNarrationPassages` preserves paragraph boundaries and only splits oversized
+passages between existing Sonelle sentences. `validatePreparedNarration` rejects missing,
+reordered, overlapping, gapped, or out-of-range sentence spans before they can drive the reader.
+
+`createNarrationSession` owns chapter opening, anchor-sentence playback, clicked-sentence moves,
+pause, close, bounded one-passage-ahead prefetch, stale foreground cancellation, and projection of
+manifest facts into narration lifecycle domain events. The session receives output settings, but
+only passes playback rate and volume to the player; auto-advance remains session policy. The
+manifest-aware player receives prepared assets and emits sentence-entry observations without
+knowing about reader state, settings persistence, or voice installation.
 
 `routeNarrationEngine` selects contextual Kokoro passages for English and bounded Supertonic
 sentence batches for supported non-English languages, using Supertonic's `na` mode when language is
@@ -39,8 +47,10 @@ both storage keys and writes only V2; the old entry remains available for rollba
 
 `PiperCompatibilityAdapter` projects one prepared Piper sentence into a one-span manifest. Its
 1,000-sample-per-second timeline is compatibility metadata, not word timing; the only boundary is
-the media element's existing sentence end. The shipped reader continues using the proven Piper
-gateway until the Phase 2 narration session consumes prepared manifests.
+the media element's existing sentence end. The desktop `HtmlManifestNarrationPlayer` consumes those
+one-span compatibility manifests through the existing HTML audio player. It intentionally rejects
+unsupported mid-passage stop requests until the decoded passage player can seek and stop at sample
+boundaries.
 
 Voice labels, locales, descriptions, and the default compatibility voice come from
 `packages/audio/src/narration-voices.json`. Browser media lifecycle is hidden behind the injected
@@ -73,13 +83,15 @@ voice lifecycle.
 ## Tests
 
 Package tests cover passage splitting, manifest validation, routing, catalog integrity, settings
-migration, cache identity, stale cancellation, deterministic adapters, Piper compatibility, voice
-selection, and prefetch behavior. Reader tests verify that the UI projection becomes an
+migration, cache identity, stale cancellation, deterministic adapters, narration-session playback
+transitions, Piper compatibility, voice selection, and prefetch behavior. Reader tests verify that
+the UI projection becomes an
 engine-independent outline without carrying Solid state into the audio module. Rust tests
 cover native request validation, cache behavior, the shared default voice catalog, platform
 selection, safe extraction, and verified voice files without making network requests.
 Desktop playback tests verify complete-buffer completion, persistent output routing, volume and
-speed changes, explicit stopping, playback failures, and prepared-source cleanup.
+speed changes, explicit stopping, playback failures, prepared-source cleanup, and HTML compatibility
+manifest playback.
 Workflow tests verify that each installation request produces one persisted ready or failed
 lifecycle. Native fake-download tests cover successful streaming and partial-file cleanup after an
 interrupted transfer.

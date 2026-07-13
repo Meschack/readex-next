@@ -14,8 +14,10 @@ export * from "./narration-manifest";
 export * from "./narration-fakes";
 export * from "./narration-identity";
 export * from "./narration-outline";
+export * from "./narration-player";
 export * from "./narration-preparation";
 export * from "./narration-routing";
+export * from "./narration-session";
 export * from "./piper-compatibility";
 
 export interface NarrationVoice {
