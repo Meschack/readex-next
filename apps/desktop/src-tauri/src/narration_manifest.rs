@@ -7,7 +7,8 @@ use tauri::{AppHandle, Manager};
 use crate::narration_cache::{
     NarrationAssetCache, NarrationSentenceSpan, PreparedNarrationManifest,
 };
-use crate::narration_engine_pack::engine_is_ready;
+use crate::narration_engine_pack::{engine_installation_path, engine_is_ready};
+use crate::supertonic_narration::{render_supertonic_manifest, RenderedManifestAudio};
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -69,13 +70,22 @@ pub fn prepare_manifest_narration(
         .app_data_dir()
         .map(|dir| dir.join("narration-v3"))
         .map_err(|_| "We couldn't open prepared audio.".to_string())?;
+    let rendered_audio = if request.engine_id == "supertonic" {
+        Some(render_supertonic_manifest(
+            &engine_installation_path(app, &request.engine_id)?,
+            &request,
+        )?)
+    } else {
+        None
+    };
 
-    prepare_manifest_narration_at(root, request)
+    prepare_manifest_narration_at(root, request, rendered_audio)
 }
 
 pub fn prepare_manifest_narration_at(
     root: PathBuf,
     request: ManifestNarrationRequest,
+    rendered_audio: Option<RenderedManifestAudio>,
 ) -> Result<PreparedManifestNarration, String> {
     validate_request(&request)?;
 
@@ -85,22 +95,22 @@ pub fn prepare_manifest_narration_at(
         return Ok(prepared_response(asset.manifest, true));
     }
 
-    let sample_rate = sample_rate_for_engine(&request.engine_id);
-    let sentences = create_sentence_spans(&request.passage.sentences, sample_rate);
-    let sample_count = sentences.last().map(|span| span.end_sample).unwrap_or(0);
+    let rendered_audio = match rendered_audio {
+        Some(audio) => audio,
+        None => render_placeholder_audio(&request)?,
+    };
     let manifest = PreparedNarrationManifest {
         asset_id,
         source_url: String::new(),
-        sample_rate,
-        sample_count,
-        sentences,
+        sample_rate: rendered_audio.sample_rate,
+        sample_count: rendered_audio.sample_count,
+        sentences: rendered_audio.sentences,
         engine_id: request.engine_id,
         model_revision: request.model_revision,
         voice_id: request.voice_id,
         source_text_digest: request.source_text_digest,
     };
-    let audio = silent_wav(sample_rate, sample_count)?;
-    let asset = cache.put(&manifest, &audio)?;
+    let asset = cache.put(&manifest, &rendered_audio.wav)?;
 
     Ok(prepared_response(asset.manifest, false))
 }
@@ -205,6 +215,20 @@ fn create_sentence_spans(
         .collect()
 }
 
+fn render_placeholder_audio(
+    request: &ManifestNarrationRequest,
+) -> Result<RenderedManifestAudio, String> {
+    let sample_rate = sample_rate_for_engine(&request.engine_id);
+    let sentences = create_sentence_spans(&request.passage.sentences, sample_rate);
+    let sample_count = sentences.last().map(|span| span.end_sample).unwrap_or(0);
+    Ok(RenderedManifestAudio {
+        sample_rate,
+        sample_count,
+        sentences,
+        wav: silent_wav(sample_rate, sample_count)?,
+    })
+}
+
 fn silent_wav(sample_rate: u32, sample_count: u64) -> Result<Vec<u8>, String> {
     let data_bytes = sample_count
         .checked_mul(2)
@@ -242,15 +266,16 @@ mod tests {
         prepare_manifest_narration_at, ManifestNarrationPassage, ManifestNarrationRequest,
         ManifestNarrationSentence,
     };
+    use crate::supertonic_narration::render_sentence_audio_to_manifest;
 
     #[test]
     fn prepares_and_reuses_cached_manifest_narration() {
         let root = tempfile_root("manifest-reuse");
         let request = request("kokoro");
 
-        let first = prepare_manifest_narration_at(root.clone(), request.clone())
+        let first = prepare_manifest_narration_at(root.clone(), request.clone(), None)
             .expect("manifest narration should prepare");
-        let second = prepare_manifest_narration_at(root, request)
+        let second = prepare_manifest_narration_at(root, request, None)
             .expect("manifest narration should be reused");
 
         assert!(!first.cached);
@@ -264,9 +289,9 @@ mod tests {
     #[test]
     fn separates_engine_outputs() {
         let root = tempfile_root("manifest-engines");
-        let kokoro = prepare_manifest_narration_at(root.clone(), request("kokoro"))
+        let kokoro = prepare_manifest_narration_at(root.clone(), request("kokoro"), None)
             .expect("kokoro narration should prepare");
-        let supertonic = prepare_manifest_narration_at(root, request("supertonic"))
+        let supertonic = prepare_manifest_narration_at(root, request("supertonic"), None)
             .expect("supertonic narration should prepare");
 
         assert_ne!(kokoro.asset_id, supertonic.asset_id);
@@ -274,10 +299,36 @@ mod tests {
     }
 
     #[test]
+    fn stores_rendered_supertonic_audio() {
+        let root = tempfile_root("manifest-rendered");
+        let request = request("supertonic");
+        let rendered = render_sentence_audio_to_manifest(
+            &request.passage.sentences,
+            44_100,
+            vec![vec![0.25; 4], vec![-0.25; 6]],
+        )
+        .expect("rendered audio should be valid");
+
+        let prepared = prepare_manifest_narration_at(root, request, Some(rendered))
+            .expect("rendered narration should prepare");
+
+        assert_eq!(prepared.sample_rate, 44_100);
+        assert_eq!(prepared.sample_count, 10);
+        assert_eq!(prepared.sentences[0].start_sample, 0);
+        assert_eq!(prepared.sentences[0].end_sample, 4);
+        assert_eq!(prepared.sentences[1].start_sample, 4);
+        assert_eq!(prepared.sentences[1].end_sample, 10);
+        assert!(fs::metadata(prepared.source_url).is_ok());
+    }
+
+    #[test]
     fn rejects_unknown_engines() {
-        let error =
-            prepare_manifest_narration_at(tempfile_root("manifest-invalid"), request("piper"))
-                .expect_err("piper manifest command should not be used yet");
+        let error = prepare_manifest_narration_at(
+            tempfile_root("manifest-invalid"),
+            request("piper"),
+            None,
+        )
+        .expect_err("piper manifest command should not be used yet");
 
         assert_eq!(error, "Prepared narration engine is not available yet.");
     }

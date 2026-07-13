@@ -111,6 +111,12 @@ pub fn engine_is_ready(app: &AppHandle, engine_id: &str) -> Result<bool, String>
     engine_is_ready_at(&root, engine_id)
 }
 
+pub fn engine_installation_path(app: &AppHandle, engine_id: &str) -> Result<PathBuf, String> {
+    let root = engine_pack_root(app)?;
+    let pack = engine_pack(engine_id)?;
+    Ok(pack_destination(&root, &pack))
+}
+
 pub fn install_engine(
     app: &AppHandle,
     engine_id: &str,

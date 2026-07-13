@@ -7,6 +7,8 @@ mod narration_engine_pack;
 mod narration_manifest;
 pub mod narration_pack;
 mod storage;
+mod supertonic_helper;
+mod supertonic_narration;
 mod text;
 mod voice_installation;
 
