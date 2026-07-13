@@ -25,6 +25,7 @@
     "spike:narration:kokoro-reference": "node scripts/setup-kokoro-reference.mjs",
     "spike:narration:kokoro-export": "node scripts/setup-kokoro-reference.mjs --export-onnx",
     "spike:narration:kokoro-corpus": "node scripts/setup-kokoro-reference.mjs --corpus",
+    "spike:narration:native-lifecycle": "node scripts/run-narration-native-spike.mjs",
     "check": "pnpm typecheck && pnpm test && pnpm format",
     "format": "prettier --check .",
     "format:write": "prettier --write ."

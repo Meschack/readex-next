@@ -1,0 +1,21 @@
+[package]
+name = "sonelle-narration-runtime-spike"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+publish = false
+
+[workspace]
+
+[dependencies]
+anyhow = "=1.0.103"
+hound = "=3.5.1"
+libc = "=0.2.186"
+ndarray = { version = "=0.17.2", features = ["rayon"] }
+ort = "=2.0.0-rc.12"
+rand = "=0.8.7"
+rand_distr = "=0.4.3"
+regex = "=1.13.0"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.150"
+unicode-normalization = "=0.1.25"

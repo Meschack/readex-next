@@ -124,6 +124,16 @@ export function setupKokoroReference(options = {}) {
     );
   }
 
+  if (options.writeNativeFixture) {
+    run(
+      venvPython,
+      ["tools/narration-spike/kokoro_reference.py", "--native-fixture"],
+      "writing native Kokoro fixture",
+      repoRoot,
+      env
+    );
+  }
+
   return { sourceDir, venvDir };
 }
 
@@ -143,6 +153,7 @@ function hasPythonPackageVersion(python, packageName, expectedVersion, env) {
 if (process.argv[1] != null && import.meta.url === pathToFileURL(process.argv[1]).href) {
   setupKokoroReference({
     exportOnnx: process.argv.includes("--export-onnx"),
-    runCorpus: process.argv.includes("--corpus")
+    runCorpus: process.argv.includes("--corpus"),
+    writeNativeFixture: process.argv.includes("--native-fixture")
   });
 }

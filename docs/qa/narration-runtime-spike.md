@@ -59,6 +59,13 @@ Generate reference and ONNX audio plus sentence-span evidence for the checked-in
 pnpm spike:narration:kokoro-corpus
 ```
 
+Build the pinned Rust ONNX Runtime harness and compare default versus bounded allocation while
+loading, switching, dropping, and reloading both engines:
+
+```bash
+pnpm spike:narration:native-lifecycle
+```
+
 Use `--engine=kokoro` or `--engine=supertonic` after `--` to prepare one engine. Everything is
 stored beneath the ignored `.sonelle/narration-spike/` directory.
 
@@ -90,26 +97,23 @@ These are preliminary feasibility measurements, not final acceptance baselines. 
 isolated, power mode was not pinned, and the official CLI starts and loads the model for every
 measurement.
 
-| Measurement                   |  Kokoro exported ONNX | Kokoro Python reference |    Supertonic native |
-| ----------------------------- | --------------------: | ----------------------: | -------------------: |
-| Downloaded model bytes        |           328,261,422 |             328,261,422 |          398,960,177 |
-| Exported model bytes          |           351,775,811 |                     N/A |       Included above |
-| Added packaged runtime bytes  |               Pending |                 Pending | 28,490,640 Linux CLI |
-| Cold model/session load       |                0.968s |                  2.167s |              Pending |
-| Warm model load               |               Pending |                 Pending |              Pending |
-| Corpus RTF                    |                 0.668 |                   0.872 |                  N/A |
-| Short-text RTF                |                 0.717 |                   1.148 |   0.288 (1.69/5.866) |
-| Paragraph RTF range           |           0.526-0.776 |             0.629-1.056 |  0.296 (8.85/29.922) |
-| Batch RTF                     |                   N/A |                     N/A |  0.249 (5.76/23.119) |
-| Peak resident memory          | 2.58 GiB combined run |   2.58 GiB combined run |          467-561 MiB |
-| Memory after unload           |               Pending |                 Pending |              Pending |
-| First playable uncached audio |               Pending |                 Pending |   2.83s process wall |
+| Measurement               | Kokoro native default | Kokoro native bounded | Kokoro Python reference | Supertonic native default | Supertonic native bounded |
+| ------------------------- | --------------------: | --------------------: | ----------------------: | ------------------------: | ------------------------: |
+| Downloaded model bytes    |           351,775,811 |           351,775,811 |             328,261,422 |               398,960,177 |               398,960,177 |
+| Added Linux runtime bytes |            27,949,440 |            27,949,440 |                 Pending |                27,949,440 |                27,949,440 |
+| Cold model/session load   |          1.206-1.518s |          0.992-1.294s |                  2.167s |              0.738-0.897s |              0.689-0.709s |
+| Warm paragraph RTF        |           0.395-0.465 |           0.556-0.595 |             0.629-1.056 |               0.511-0.574 |               0.290-0.362 |
+| Corpus RTF                |               Pending |               Pending |                   0.872 |                       N/A |                       N/A |
+| Peak observed RSS         |             1,220 MiB |               689 MiB |   2.58 GiB combined run |                   485 MiB |                   476 MiB |
+| RSS after drop            |           138-203 MiB |            82-405 MiB |                 Pending |               456-482 MiB |               306-471 MiB |
+| RSS after glibc trim      |             33-34 MiB |             33-34 MiB |                     N/A |                 35-36 MiB |                 35-36 MiB |
+| Destructor time           |               44-83ms |               16-40ms |                 Pending |                   11-13ms |                   15-30ms |
 
 The Kokoro corpus contains 170.9 seconds of audio. Its ONNX and Python timings were collected in one
 process, so the 2.58 GiB peak is deliberately labeled as a combined reference cost, not a native
-production estimate. The runtime-size value is the unstripped Linux Supertonic reference CLI, not a
-production bundle measurement. The Supertonic first-playable value includes process startup and
-model loading for the short-text run.
+production estimate. Native lifecycle figures come from two non-isolated runs per allocation mode
+and are not yet p50 or p95 acceptance baselines. The 27.9 MB unstripped harness statically contains
+ONNX Runtime and dynamically links only standard Linux runtime libraries.
 
 The native reference compiled successfully in 65 seconds after dependency download. Its preliminary
 Linux executable has no separately linked ONNX Runtime library, but production bundle measurements
@@ -118,12 +122,24 @@ must include stripping, licenses, platform runtime files, and Tauri integration.
 ### Early Native Findings
 
 - The official Supertonic Rust manifest declares `ort = "2.0.0-rc.7"` without committing a lockfile.
-  Cargo resolved `ort` and `ort-sys` 2.0.0-rc.12 during this run. Sonelle must pin an exact reviewed
-  version and commit its production lockfile.
+  The native harness pins `ort` and `ort-sys` 2.0.0-rc.12 exactly and commits its standalone
+  lockfile. The eventual production crate must keep that exact-version policy.
 - The official example calls `mem::forget` and `libc::_exit(0)` to avoid an ONNX Runtime mutex cleanup
   issue documented for macOS. Sonelle cannot copy that lifecycle because it must unload or switch
-  engines inside a long-running Tauri process. Clean session disposal is therefore an explicit
-  Phase 0 gate.
+  engines inside a long-running Tauri process. The Linux harness reached ordinary Rust destruction
+  after loading Kokoro, switching to Supertonic, switching back, and validating Kokoro again. This
+  passes the Linux lifecycle gate but does not close the documented macOS risk.
+- Both allocation modes rejected a deliberately malformed ONNX model as a recoverable error. This
+  proves the tested model-load failure path can report an error without terminating the host
+  process; missing files and incompatible model revisions still need explicit coverage.
+- Default ONNX Runtime allocation reached 1,220 MiB RSS while bounded allocation reduced the highest
+  observed sample to 689 MiB, but the bounded Kokoro run was slower and these are single-run,
+  non-isolated measurements. Repeated p50/p95 measurements are required before selecting the
+  production allocation policy.
+- RSS remained hundreds of MiB immediately after ordinary destructors, then returned to 33-36 MiB
+  after a diagnostic `malloc_trim(0)` on glibc. That strongly suggests allocator-retained freed pages
+  rather than live model sessions on this Linux run. Trimming is evidence tooling, not yet a
+  production policy, and equivalent evidence is still required on Windows and macOS.
 - Batch inference improved the preliminary RTF by roughly 16% compared with the short and paragraph
   single-call runs, while raising peak memory. A persistent-session sequential baseline is still
   required before choosing the production Supertonic prefetch batch size.
@@ -152,12 +168,12 @@ must include stripping, licenses, platform runtime files, and Tauri integration.
 
 ## Cross-Platform Results
 
-| Platform            | Build   | Clean start | Synthesis | Shutdown | Candidate bundle | Notes |
-| ------------------- | ------- | ----------- | --------- | -------- | ---------------- | ----- |
-| Windows x64         | Pending | Pending     | Pending   | Pending  | Pending          |       |
-| Linux x64           | Pending | Pending     | Pending   | Pending  | Pending          |       |
-| macOS Intel         | Pending | Pending     | Pending   | Pending  | Pending          |       |
-| macOS Apple Silicon | Pending | Pending     | Pending   | Pending  | Pending          |       |
+| Platform            | Build   | Clean start | Synthesis | Shutdown | Candidate bundle | Notes                                                      |
+| ------------------- | ------- | ----------- | --------- | -------- | ---------------- | ---------------------------------------------------------- |
+| Windows x64         | Pending | Pending     | Pending   | Pending  | Pending          |                                                            |
+| Linux x64           | Pass    | Pass        | Pass      | Pass     | Pending          | Native harness; bundle sizing and Tauri integration remain |
+| macOS Intel         | Pending | Pending     | Pending   | Pending  | Pending          |                                                            |
+| macOS Apple Silicon | Pending | Pending     | Pending   | Pending  | Pending          |                                                            |
 
 ## Alignment Results
 

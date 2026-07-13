@@ -8,6 +8,7 @@ runtime selection, cache, playback, or UI.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import platform
 import resource
@@ -174,6 +175,69 @@ def run_corpus() -> None:
         raise RuntimeError(
             f"Reference validation failed; invalid={invalid}, duration_mismatch={mismatched}"
         )
+
+
+def write_native_fixture() -> None:
+    _, KPipeline, numpy, onnxruntime, _, torch = load_reference_modules()
+    if not KOKORO_ONNX.is_file():
+        raise RuntimeError(
+            "Kokoro ONNX is missing. Run pnpm spike:narration:kokoro-export first."
+        )
+
+    corpus = json.loads(CORPUS_PATH.read_text(encoding="utf-8"))
+    passage = corpus["passages"][0]
+    text = " ".join(passage["sentences"])
+    config_path = KOKORO_SOURCE / "checkpoints" / "config.json"
+    voice_path = KOKORO_SOURCE / "checkpoints" / "voices" / "af_heart.pt"
+    if not config_path.is_file() or not voice_path.is_file():
+        raise RuntimeError("Kokoro config or voice is missing. Run the model setup first.")
+
+    pipeline = KPipeline(
+        lang_code="a",
+        model=False,
+        repo_id="hexgrad/Kokoro-82M",
+        device="cpu",
+    )
+    _, tokens = pipeline.g2p(text)
+    prepared = list(pipeline.en_tokenize(tokens))
+    if len(prepared) != 1:
+        raise RuntimeError("The native fixture passage must fit one Kokoro model invocation.")
+    _, phonemes, _ = prepared[0]
+
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    input_ids = [config["vocab"].get(phoneme) for phoneme in phonemes]
+    input_ids = [token_id for token_id in input_ids if token_id is not None]
+    input_ids = [0, *input_ids, 0]
+    voice_pack = torch.load(voice_path, map_location="cpu", weights_only=True)
+    style = voice_pack[len(phonemes) - 1].detach().cpu().numpy()
+    speed = numpy.asarray([1], dtype=numpy.int32)
+
+    session = onnxruntime.InferenceSession(
+        str(KOKORO_ONNX), providers=["CPUExecutionProvider"]
+    )
+    waveform, durations = session.run(
+        None,
+        {
+            "input_ids": numpy.asarray([input_ids], dtype=numpy.int64),
+            "style": style,
+            "speed": speed,
+        },
+    )
+    fixture = {
+        "schemaVersion": 1,
+        "passageId": passage["id"],
+        "textSha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "sampleRate": SAMPLE_RATE,
+        "inputIds": input_ids,
+        "style": style.reshape(-1).tolist(),
+        "speed": int(speed[0]),
+        "expectedDurations": durations.reshape(-1).tolist(),
+        "expectedWaveformSamples": int(waveform.size),
+    }
+    fixture_path = RESULTS_DIR / "native-fixture.json"
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    fixture_path.write_text(json.dumps(fixture, indent=2) + "\n", encoding="utf-8")
+    print(f"Native Kokoro fixture: {fixture_path.relative_to(REPO_ROOT)}")
 
 
 def run_passage(
@@ -349,13 +413,23 @@ def parse_args() -> argparse.Namespace:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--smoke", action="store_true", help="verify English G2P dependencies")
     mode.add_argument("--corpus", action="store_true", help="generate alignment evidence")
+    mode.add_argument(
+        "--native-fixture",
+        action="store_true",
+        help="export one pinned ONNX input and expected output",
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     arguments = parse_args()
     try:
-        smoke_test() if arguments.smoke else run_corpus()
+        if arguments.smoke:
+            smoke_test()
+        elif arguments.corpus:
+            run_corpus()
+        else:
+            write_native_fixture()
     except Exception as error:
         print(f"Kokoro reference failed: {error}", file=sys.stderr)
         raise
