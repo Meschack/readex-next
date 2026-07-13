@@ -97,6 +97,9 @@ pub fn prepare_manifest_narration_at(
 
     let rendered_audio = match rendered_audio {
         Some(audio) => audio,
+        None if request.engine_id == "kokoro" => {
+            return Err("English narration is not ready yet.".to_string());
+        }
         None => render_placeholder_audio(&request)?,
     };
     let manifest = PreparedNarrationManifest {
@@ -271,7 +274,7 @@ mod tests {
     #[test]
     fn prepares_and_reuses_cached_manifest_narration() {
         let root = tempfile_root("manifest-reuse");
-        let request = request("kokoro");
+        let request = request("supertonic");
 
         let first = prepare_manifest_narration_at(root.clone(), request.clone(), None)
             .expect("manifest narration should prepare");
@@ -281,21 +284,21 @@ mod tests {
         assert!(!first.cached);
         assert!(second.cached);
         assert_eq!(first.asset_id, second.asset_id);
-        assert_eq!(first.sample_rate, 24_000);
+        assert_eq!(first.sample_rate, 44_100);
         assert_eq!(first.sentences.len(), 2);
         assert!(fs::metadata(first.source_url).is_ok());
     }
 
     #[test]
-    fn separates_engine_outputs() {
-        let root = tempfile_root("manifest-engines");
-        let kokoro = prepare_manifest_narration_at(root.clone(), request("kokoro"), None)
-            .expect("kokoro narration should prepare");
-        let supertonic = prepare_manifest_narration_at(root, request("supertonic"), None)
-            .expect("supertonic narration should prepare");
+    fn rejects_kokoro_without_a_native_rendered_manifest() {
+        let error = prepare_manifest_narration_at(
+            tempfile_root("manifest-kokoro-pending"),
+            request("kokoro"),
+            None,
+        )
+        .expect_err("kokoro should not use placeholder audio");
 
-        assert_ne!(kokoro.asset_id, supertonic.asset_id);
-        assert_eq!(supertonic.sample_rate, 44_100);
+        assert_eq!(error, "English narration is not ready yet.");
     }
 
     #[test]
