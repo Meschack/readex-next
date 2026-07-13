@@ -3,7 +3,10 @@
 ## Owns
 
 - voice catalog metadata and language-aware voice resolution
-- narration request identity, prefetching, and playback readiness contracts
+- engine-independent chapter outlines, paragraph passage construction, and engine routing
+- prepared narration, sentence-span validation, request identity, and stale preparation cancellation
+- versioned audio settings and per-language voice preference migration
+- deterministic passage and sentence-batch adapters for contract tests
 - the desktop adapter for native Piper preparation and playback
 - selected-voice installation status, progress, verification, and retry
 
@@ -12,13 +15,37 @@
 - reader UI state, chapter navigation, or reading progress
 - book-language detection and EPUB metadata extraction
 - persisted reader preferences
+- decoded manifest-aware playback, which belongs to the Phase 2 player
+- model inference, pack installation, and cache V3 storage, which remain native adapter concerns
 
 ## Interface
 
-Reader workflows depend on `PrefetchingNarrationGateway`. Voice labels, locales, descriptions, and
-the default voice come from `packages/audio/src/narration-voices.json`. Browser media lifecycle is
-hidden behind the injected `HtmlAudioPlayer` interface. Native voice progress projects cumulative
-downloaded bytes, total bytes, and percentage into the reader without exposing network details.
+The current reader workflow still depends on `PrefetchingNarrationGateway` while Phase 2 is pending.
+New engine adapters implement `NarrationPreparationAdapter` and return `PreparedNarration` with a
+complete ordered sample timeline. `createNarrationPassages` preserves paragraph boundaries and only
+splits oversized passages between existing Sonelle sentences. `validatePreparedNarration` rejects
+missing, reordered, overlapping, gapped, or out-of-range sentence spans before they can drive the
+reader.
+
+`routeNarrationEngine` selects contextual Kokoro passages for English and bounded Supertonic
+sentence batches for supported non-English languages, using Supertonic's `na` mode when language is
+missing or unsupported. The catalog schema keeps selectable voices separate from engine-native
+voice IDs, model revisions, and installed file packs. Candidate production voices remain absent
+until listening and license review finish.
+
+Audio settings serialize as schema V2 with per-language preferences and a compatibility `voiceId`.
+Legacy V1 settings derive a preference from the persisted Piper voice. The desktop repository reads
+both storage keys and writes only V2; the old entry remains available for rollback.
+
+`PiperCompatibilityAdapter` projects one prepared Piper sentence into a one-span manifest. Its
+1,000-sample-per-second timeline is compatibility metadata, not word timing; the only boundary is
+the media element's existing sentence end. The shipped reader continues using the proven Piper
+gateway until the Phase 2 narration session consumes prepared manifests.
+
+Voice labels, locales, descriptions, and the default compatibility voice come from
+`packages/audio/src/narration-voices.json`. Browser media lifecycle is hidden behind the injected
+`HtmlAudioPlayer` interface. Native voice progress projects cumulative downloaded bytes, total
+bytes, and percentage into the reader without exposing network details.
 Playback volume is persisted with the reader's audio settings. `HtmlAudioPlayer` owns ordinary
 media fallback and the primary decoded-buffer playback path. Prepared sentence bytes are decoded
 into Web Audio buffers and connected to one persistent gain bus, allowing a modest narration boost
@@ -36,13 +63,19 @@ voice preparation never opens a console window over the reader on Windows.
 
 ## Domain Events
 
-`AudioPreparationRequested`, `SentenceAudioReady`, and `AudioPreparationFailed` describe the
-reader-visible narration lifecycle. `VoiceInstallationRequested`, `VoiceInstallationReady`, and
-`VoiceInstallationFailed` describe the separately managed offline voice lifecycle.
+`AudioPreparationRequested`, `SentenceAudioReady`, and `AudioPreparationFailed` remain during Piper
+compatibility. `PassageNarrationReady`, `NarrationSentenceEntered`, `NarrationPlaybackPaused`,
+`NarrationPlaybackEnded`, and `NarrationPlaybackFailed` describe the manifest-aware lifecycle
+without publishing high-frequency media-clock updates. `VoiceInstallationRequested`,
+`VoiceInstallationReady`, and `VoiceInstallationFailed` describe the separately managed offline
+voice lifecycle.
 
 ## Tests
 
-Package tests cover voice selection, settings, request identity, and prefetch behavior. Rust tests
+Package tests cover passage splitting, manifest validation, routing, catalog integrity, settings
+migration, cache identity, stale cancellation, deterministic adapters, Piper compatibility, voice
+selection, and prefetch behavior. Reader tests verify that the UI projection becomes an
+engine-independent outline without carrying Solid state into the audio module. Rust tests
 cover native request validation, cache behavior, the shared default voice catalog, platform
 selection, safe extraction, and verified voice files without making network requests.
 Desktop playback tests verify complete-buffer completion, persistent output routing, volume and

@@ -9,8 +9,9 @@ import {
   Show
 } from "solid-js";
 import {
+  activateAudioSettingsForLanguage,
   createAudioSettings,
-  resolveNarrationVoiceForLanguage,
+  selectNarrationVoicePreference,
   type AudioSettings,
   type SentenceNarration,
   type SentenceNarrationRequest
@@ -628,7 +629,14 @@ export function ReaderExperience(props: ReaderExperienceProps) {
 
   const updateAudioSettings = (nextSettings: Partial<AudioSettings>) => {
     const currentSettings = audioSettings();
-    const nextAudioSettings = createAudioSettings({ ...currentSettings, ...nextSettings });
+    const nextAudioSettings =
+      nextSettings.voiceId != null && nextSettings.voiceId !== currentSettings.voiceId
+        ? selectNarrationVoicePreference(
+            createAudioSettings({ ...currentSettings, ...nextSettings }),
+            reader().book.language,
+            nextSettings.voiceId
+          )
+        : createAudioSettings({ ...currentSettings, ...nextSettings });
 
     if (nextAudioSettings.voiceId !== currentSettings.voiceId) {
       stopActiveHtmlAudio();
@@ -729,13 +737,9 @@ export function ReaderExperience(props: ReaderExperienceProps) {
     const currentAudioSettings = audioSettings();
     const switchingBooks =
       nextReader.book.id !== previousReader.book.id || nextReader.source !== previousReader.source;
-    const nextVoiceId = switchingBooks
-      ? resolveNarrationVoiceForLanguage(nextReader.book.language, currentAudioSettings.voiceId)
-      : currentAudioSettings.voiceId;
-    const nextAudioSettings = createAudioSettings({
-      ...currentAudioSettings,
-      voiceId: nextVoiceId
-    });
+    const nextAudioSettings = switchingBooks
+      ? activateAudioSettingsForLanguage(currentAudioSettings, nextReader.book.language)
+      : currentAudioSettings;
 
     readingPositionScheduler.flush();
     nextPositionSaveIntent = "immediate";

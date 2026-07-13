@@ -1,6 +1,7 @@
 import { parseAudioSettings, serializeAudioSettings, type AudioSettings } from "@sonelle/audio";
 
-const audioSettingsStorageKey = "sonelle.audio.settings.v1";
+const audioSettingsStorageKey = "sonelle.audio.settings.v2";
+const legacyAudioSettingsStorageKey = "sonelle.audio.settings.v1";
 
 export interface AudioSettingsRepository {
   load(): AudioSettings;
@@ -11,7 +12,10 @@ export function createAudioSettingsRepository(): AudioSettingsRepository {
   return {
     load() {
       if (typeof localStorage === "undefined") return parseAudioSettings(null);
-      return parseAudioSettings(localStorage.getItem(audioSettingsStorageKey));
+      return parseAudioSettings(
+        localStorage.getItem(audioSettingsStorageKey) ??
+          localStorage.getItem(legacyAudioSettingsStorageKey)
+      );
     },
 
     save(settings) {

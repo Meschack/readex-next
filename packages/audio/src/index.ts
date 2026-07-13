@@ -1,26 +1,22 @@
-import { normalizeLanguageCode, type SentenceRef } from "@sonelle/domain";
+import { normalizeLanguageCode } from "@sonelle/domain";
 import narrationVoiceConfig from "./narration-voices.json";
+import type {
+  NarrationGateway,
+  PrefetchingNarrationGateway,
+  SentenceNarration,
+  SentenceNarrationRequest
+} from "./legacy-narration";
 
-export type AudioReadiness = "ready" | "preparing" | "needs-attention" | "unavailable";
-export type NarrationPlaybackMode = "html-audio" | "native-speech";
-
-export interface SentenceAudio extends SentenceRef {
-  readiness: AudioReadiness;
-  durationSec: number | null;
-  sourceUrl: string | null;
-}
-
-export interface SentenceNarration extends SentenceAudio {
-  playbackMode: NarrationPlaybackMode;
-  cached: boolean;
-  message: string | null;
-}
-
-export interface SentenceNarrationRequest extends SentenceRef {
-  sentenceIndex: number;
-  text: string;
-  voiceId: string;
-}
+export * from "./legacy-narration";
+export * from "./narration-contracts";
+export * from "./narration-catalog";
+export * from "./narration-manifest";
+export * from "./narration-fakes";
+export * from "./narration-identity";
+export * from "./narration-outline";
+export * from "./narration-preparation";
+export * from "./narration-routing";
+export * from "./piper-compatibility";
 
 export interface NarrationVoice {
   id: string;
@@ -34,20 +30,11 @@ export interface AudioSettings {
   volume: number;
   autoAdvance: boolean;
   voiceId: string;
+  voicePreferences: Readonly<Record<string, string>>;
 }
 
-export interface NarrationGateway {
-  prepareSentenceAudio(request: SentenceNarrationRequest): Promise<SentenceNarration>;
-  playPreparedSentenceAudio(
-    request: SentenceNarrationRequest,
-    narration: SentenceNarration
-  ): Promise<void>;
-  stopPreparedSentenceAudio(): Promise<void>;
-}
-
-export interface PrefetchingNarrationGateway extends NarrationGateway {
-  prefetchSentenceAudio(request: SentenceNarrationRequest): Promise<void>;
-  clearPrefetchedNarrations(): void;
+interface SerializedAudioSettingsV2 extends AudioSettings {
+  schemaVersion: 2;
 }
 
 export class FakeNarrationGateway implements NarrationGateway {
@@ -141,31 +128,75 @@ export const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
   playbackRate: 0.9,
   volume: 1.2,
   voiceId: DEFAULT_NARRATION_VOICE_ID,
+  voicePreferences: { en: DEFAULT_NARRATION_VOICE_ID },
   autoAdvance: true
 };
 
 export function createAudioSettings(input: Partial<AudioSettings> = {}): AudioSettings {
+  const voiceId = normalizeNarrationVoiceId(input.voiceId);
   return {
     playbackRate: clampPlaybackRate(input.playbackRate ?? DEFAULT_AUDIO_SETTINGS.playbackRate),
     volume: clampVolume(input.volume ?? DEFAULT_AUDIO_SETTINGS.volume),
-    voiceId: normalizeNarrationVoiceId(input.voiceId),
-    autoAdvance: input.autoAdvance ?? DEFAULT_AUDIO_SETTINGS.autoAdvance
+    voiceId,
+    voicePreferences: normalizeVoicePreferences(input.voicePreferences, voiceId),
+    autoAdvance:
+      typeof input.autoAdvance === "boolean"
+        ? input.autoAdvance
+        : DEFAULT_AUDIO_SETTINGS.autoAdvance
   };
 }
 
 export function serializeAudioSettings(settings: AudioSettings): string {
-  return JSON.stringify(createAudioSettings(settings));
+  const normalized = createAudioSettings(settings);
+  const serialized: SerializedAudioSettingsV2 = { schemaVersion: 2, ...normalized };
+  return JSON.stringify(serialized);
 }
 
 export function parseAudioSettings(value: string | null): AudioSettings {
   if (value == null) return DEFAULT_AUDIO_SETTINGS;
 
   try {
-    const parsed = JSON.parse(value) as Partial<AudioSettings>;
+    const parsed = JSON.parse(value) as Partial<SerializedAudioSettingsV2> | null;
+    if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return DEFAULT_AUDIO_SETTINGS;
+    }
+    if (parsed.schemaVersion != null && parsed.schemaVersion !== 2) {
+      return DEFAULT_AUDIO_SETTINGS;
+    }
     return createAudioSettings(parsed);
   } catch {
     return DEFAULT_AUDIO_SETTINGS;
   }
+}
+
+export function selectNarrationVoicePreference(
+  settings: AudioSettings,
+  language: string | null | undefined,
+  voiceId: string
+): AudioSettings {
+  const normalizedVoiceId = normalizeNarrationVoiceId(voiceId);
+  const languageCode = normalizeLanguageCode(language) ?? "*";
+  return createAudioSettings({
+    ...settings,
+    voiceId: normalizedVoiceId,
+    voicePreferences: {
+      ...settings.voicePreferences,
+      [languageCode]: normalizedVoiceId
+    }
+  });
+}
+
+export function activateAudioSettingsForLanguage(
+  settings: AudioSettings,
+  language: string | null | undefined
+): AudioSettings {
+  const languageCode = normalizeLanguageCode(language);
+  const preferredVoiceId =
+    (languageCode == null
+      ? settings.voicePreferences["*"]
+      : settings.voicePreferences[languageCode]) ?? settings.voicePreferences["*"];
+  const voiceId = resolveNarrationVoiceForLanguage(language, preferredVoiceId ?? settings.voiceId);
+  return createAudioSettings({ ...settings, voiceId });
 }
 
 export function estimateSentenceDurationSec(text: string): number {
@@ -219,6 +250,33 @@ function clampVolume(volume: number): number {
 function normalizeNarrationVoiceId(voiceId: string | undefined): string {
   if (voiceId != null && isSupportedNarrationVoiceId(voiceId)) return voiceId;
   return DEFAULT_AUDIO_SETTINGS.voiceId;
+}
+
+function normalizeVoicePreferences(
+  preferences: Readonly<Record<string, string>> | undefined,
+  activeVoiceId: string
+): Readonly<Record<string, string>> {
+  const normalized: Record<string, string> = {};
+  for (const [language, voiceId] of Object.entries(preferences ?? {})) {
+    if (!isSupportedNarrationVoiceId(voiceId)) continue;
+    const languageCode = language === "*" ? "*" : normalizeLanguageCode(language);
+    if (languageCode == null) continue;
+    const voice = SUPPORTED_NARRATION_VOICES.find((candidate) => candidate.id === voiceId);
+    if (
+      languageCode !== "*" &&
+      normalizeLanguageCode(voice?.locale) !== normalizeLanguageCode(languageCode)
+    ) {
+      continue;
+    }
+    normalized[languageCode] = voiceId;
+  }
+
+  const activeVoice = SUPPORTED_NARRATION_VOICES.find((voice) => voice.id === activeVoiceId);
+  const languageCode = normalizeLanguageCode(activeVoice?.locale) ?? "*";
+  if (normalized[languageCode] == null) {
+    normalized[languageCode] = activeVoiceId;
+  }
+  return normalized;
 }
 
 function normalizeLocale(language: string | null | undefined): string | null {

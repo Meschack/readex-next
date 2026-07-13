@@ -14,6 +14,25 @@ export interface DomainEventPayloadMap {
   AudioPreparationRequested: SentenceRef & { voiceId: string };
   SentenceAudioReady: SentenceRef & { voiceId: string; source: "cache" | "prepared" };
   AudioPreparationFailed: SentenceRef & { voiceId: string; reason: string };
+  PassageNarrationReady: {
+    bookId: EntityId;
+    chapterId: EntityId;
+    passageId: EntityId;
+    firstSentenceId: EntityId;
+    lastSentenceId: EntityId;
+    voiceId: string;
+    engineId: string;
+    source: "cache" | "prepared";
+  };
+  NarrationSentenceEntered: SentenceRef & { passageId: EntityId };
+  NarrationPlaybackPaused: SentenceRef & { passageId: EntityId };
+  NarrationPlaybackEnded: {
+    bookId: EntityId;
+    chapterId: EntityId;
+    passageId: EntityId;
+    lastSentenceId: EntityId;
+  };
+  NarrationPlaybackFailed: SentenceRef & { passageId: EntityId | null; reason: string };
   VoiceInstallationRequested: { voiceId: string };
   VoiceInstallationReady: { voiceId: string };
   VoiceInstallationFailed: { voiceId: string; reason: string };

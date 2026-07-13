@@ -17,6 +17,40 @@ describe("language codes", () => {
 });
 
 describe("domain event dispatcher", () => {
+  it("keeps preparation and active-sentence projections as independent facts", async () => {
+    const dispatcher = createDomainEventDispatcher();
+    const reactions: string[] = [];
+    dispatcher.subscribe("PassageNarrationReady", (event) => {
+      reactions.push(`ready:${event.payload.firstSentenceId}:${event.payload.lastSentenceId}`);
+    });
+    dispatcher.subscribe("NarrationSentenceEntered", (event) => {
+      reactions.push(`entered:${event.payload.sentenceId}`);
+    });
+
+    await dispatcher.dispatch(
+      createDomainEvent("PassageNarrationReady", {
+        bookId: "book-1",
+        chapterId: "chapter-1",
+        passageId: "passage-1",
+        firstSentenceId: "sentence-1",
+        lastSentenceId: "sentence-2",
+        voiceId: "kokoro:af-heart",
+        engineId: "kokoro",
+        source: "prepared"
+      })
+    );
+    await dispatcher.dispatch(
+      createDomainEvent("NarrationSentenceEntered", {
+        bookId: "book-1",
+        chapterId: "chapter-1",
+        sentenceId: "sentence-2",
+        passageId: "passage-1"
+      })
+    );
+
+    expect(reactions).toEqual(["ready:sentence-1:sentence-2", "entered:sentence-2"]);
+  });
+
   it("represents offline voice installation as a domain lifecycle", async () => {
     const dispatcher = createDomainEventDispatcher();
     const reactions: string[] = [];
