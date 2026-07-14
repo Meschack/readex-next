@@ -307,7 +307,14 @@ mod tests {
         engine_is_ready_at, engine_pack, engine_status_at, file_url_path,
         NativeEngineDownloadClient,
     };
-    use crate::narration_pack::NarrationPackDownloadClient;
+    use crate::kokoro_manifest::render_kokoro_manifest;
+    use crate::narration_manifest::{
+        ManifestNarrationPassage, ManifestNarrationRequest, ManifestNarrationSentence,
+    };
+    use crate::narration_pack::{
+        install_narration_pack, installed_pack_is_ready, NarrationPackDownloadClient,
+    };
+    use std::collections::BTreeMap;
     use std::{
         fs,
         path::PathBuf,
@@ -401,6 +408,47 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "installs the local Kokoro runtime pack and renders with the real ONNX model"]
+    fn installs_local_kokoro_catalog_and_renders_from_the_installed_pack() {
+        let catalog = [
+            PathBuf::from(".sonelle/narration-spike/local-engine-catalog.json"),
+            PathBuf::from("../../.sonelle/narration-spike/local-engine-catalog.json"),
+            PathBuf::from("../../../.sonelle/narration-spike/local-engine-catalog.json"),
+        ]
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .expect("local Kokoro engine catalog should exist");
+        let catalog_json = fs::read_to_string(catalog).expect("catalog should read");
+        let pack = super::engine_pack_from_catalog_json("kokoro", &catalog_json)
+            .expect("Kokoro pack should load");
+        let root = test_root("kokoro-local-pack-smoke");
+        let mut progress = Vec::new();
+
+        install_narration_pack(
+            &root,
+            &pack,
+            &NativeEngineDownloadClient,
+            &mut |done, total| {
+                progress.push((done, total));
+            },
+        )
+        .expect("local Kokoro pack should install");
+        let destination = root.join(&pack.id).join(&pack.revision);
+        assert!(installed_pack_is_ready(&destination, &pack));
+        let total_bytes = super::pack_size_bytes(&pack);
+        assert_eq!(progress.last(), Some(&(total_bytes, total_bytes)));
+
+        let rendered = render_kokoro_manifest(&destination, &kokoro_request())
+            .expect("installed Kokoro pack should render");
+
+        assert_eq!(rendered.sample_rate, 24_000);
+        assert!(rendered.sample_count > 1_000);
+        assert_eq!(rendered.sentences.len(), 1);
+        assert_eq!(&rendered.wav[..4], b"RIFF");
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
     fn reports_engine_status_from_installed_pack_records() {
         let root = test_root("engine-status");
         let missing = engine_status_at(&root, "kokoro").expect("status should load");
@@ -416,6 +464,29 @@ mod tests {
             .expect_err("piper is not a hybrid engine pack");
 
         assert_eq!(error, "Narration engine is not available yet.");
+    }
+
+    fn kokoro_request() -> ManifestNarrationRequest {
+        ManifestNarrationRequest {
+            request_id: "request-1".to_string(),
+            passage: ManifestNarrationPassage {
+                id: "passage-1".to_string(),
+                book_id: "book-1".to_string(),
+                chapter_id: "chapter-1".to_string(),
+                paragraph_id: "paragraph-1".to_string(),
+                language: Some("en".to_string()),
+                sentences: vec![ManifestNarrationSentence {
+                    id: "sentence-1".to_string(),
+                    index: 0,
+                    text: "Sonelle keeps narration aligned with the text.".to_string(),
+                }],
+            },
+            engine_id: "kokoro".to_string(),
+            model_revision: "kokoro-local".to_string(),
+            voice_id: "kokoro:af-heart".to_string(),
+            source_text_digest: "digest".to_string(),
+            synthesis_parameters: BTreeMap::new(),
+        }
     }
 
     fn test_root(name: &str) -> PathBuf {
