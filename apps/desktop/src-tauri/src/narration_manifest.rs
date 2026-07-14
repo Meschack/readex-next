@@ -4,11 +4,13 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 
+use crate::kokoro_manifest::render_kokoro_manifest;
 use crate::narration_cache::{
     NarrationAssetCache, NarrationSentenceSpan, PreparedNarrationManifest,
 };
 use crate::narration_engine_pack::{engine_installation_path, engine_is_ready};
-use crate::supertonic_narration::{render_supertonic_manifest, RenderedManifestAudio};
+use crate::narration_rendered_audio::RenderedManifestAudio;
+use crate::supertonic_narration::render_supertonic_manifest;
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -70,13 +72,11 @@ pub fn prepare_manifest_narration(
         .app_data_dir()
         .map(|dir| dir.join("narration-v3"))
         .map_err(|_| "We couldn't open prepared audio.".to_string())?;
-    let rendered_audio = if request.engine_id == "supertonic" {
-        Some(render_supertonic_manifest(
-            &engine_installation_path(app, &request.engine_id)?,
-            &request,
-        )?)
-    } else {
-        None
+    let engine_path = engine_installation_path(app, &request.engine_id)?;
+    let rendered_audio = match request.engine_id.as_str() {
+        "kokoro" => Some(render_kokoro_manifest(&engine_path, &request)?),
+        "supertonic" => Some(render_supertonic_manifest(&engine_path, &request)?),
+        _ => None,
     };
 
     prepare_manifest_narration_at(root, request, rendered_audio)

@@ -2,16 +2,9 @@ use std::path::Path;
 
 use crate::narration_cache::NarrationSentenceSpan;
 use crate::narration_manifest::{ManifestNarrationRequest, ManifestNarrationSentence};
+use crate::narration_rendered_audio::RenderedManifestAudio;
 use crate::narration_wav::float_wav;
 use crate::supertonic_helper;
-
-#[derive(Debug)]
-pub struct RenderedManifestAudio {
-    pub sample_rate: u32,
-    pub sample_count: u64,
-    pub sentences: Vec<NarrationSentenceSpan>,
-    pub wav: Vec<u8>,
-}
 
 pub fn render_supertonic_manifest(
     engine_installation_path: &Path,

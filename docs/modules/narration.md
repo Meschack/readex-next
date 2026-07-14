@@ -9,6 +9,7 @@
 - generic native narration-pack installation and V3 prepared audio/manifest cache primitives
 - Kokoro English sentence alignment, paragraph-preparation fallback policy, and hybrid routing guard
 - native Kokoro English phonemization boundary for prepared sentence text
+- native Kokoro manifest rendering from English sentence text to validated WAV and sample spans
 - versioned audio settings and per-language voice preference migration
 - deterministic passage and sentence-batch adapters for contract tests
 - the desktop adapter for native Piper preparation and playback
@@ -68,6 +69,12 @@ The native `kokoro_text` module owns English grapheme-to-phoneme conversion for 
 wraps `misaki-rs` with default features disabled, preserves Sonelle sentence IDs, supports American
 and British English, and rejects empty or unknown phoneme output before model preparation. It does
 not enable the eSpeak fallback until licensing, packaging, and real-book QA justify that dependency.
+
+The native `kokoro_manifest` module composes the Kokoro path for actual English preparation. It
+resolves model/config/voice-style files from the installed engine pack, chooses the English dialect
+from the voice ID, phonemizes sentence text, prepares model input, runs the duration-preserving ONNX
+model, projects duration output into contiguous Sonelle sentence spans, and returns PCM WAV plus a
+validated sample timeline. It does not write cache entries or accept waveform-only Kokoro exports.
 
 `KokoroNarrationAdapter` owns the engine-independent English passage contract. It accepts only
 confidently English requests, asks an injected engine for paragraph synthesis, maps timed Kokoro
