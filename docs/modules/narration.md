@@ -8,6 +8,7 @@
   manifest-aware narration-session orchestration
 - generic native narration-pack installation and V3 prepared audio/manifest cache primitives
 - Kokoro English sentence alignment, paragraph-preparation fallback policy, and hybrid routing guard
+- native Kokoro English phonemization boundary for prepared sentence text
 - versioned audio settings and per-language voice preference migration
 - deterministic passage and sentence-batch adapters for contract tests
 - the desktop adapter for native Piper preparation and playback
@@ -20,8 +21,8 @@
 - persisted reader preferences
 - native decoded playback implementation details beyond the manifest-aware player interface
 - model inference and engine-specific cache key construction, which remain native adapter concerns
-- Kokoro model redistribution, G2P packaging, and listening-QA voice selection until release gates
-  finish
+- Kokoro model redistribution, eSpeak fallback packaging, and listening-QA voice selection until
+  release gates finish
 
 ## Interface
 
@@ -59,9 +60,14 @@ The native `narration_manifest` command is the desktop boundary for future Kokor
 preparation. It accepts engine-independent passage requests, builds deterministic asset identity
 from engine, voice, model revision, source text, and synthesis parameters, and stores prepared
 audio in the V3 cache. The Tauri command refuses hybrid preparation until the requested engine pack
-is installed. Until real model adapters land, installed packs still produce validated silent
-manifests so the IPC and cache contract can be exercised without pretending missing models are
-usable narration.
+is installed. Supertonic can exercise the cache contract with deterministic placeholder audio in
+tests, but Kokoro refuses placeholder manifests until native English synthesis is wired, because
+silent English passages would hide broken sentence timing.
+
+The native `kokoro_text` module owns English grapheme-to-phoneme conversion for the Kokoro path. It
+wraps `misaki-rs` with default features disabled, preserves Sonelle sentence IDs, supports American
+and British English, and rejects empty or unknown phoneme output before model preparation. It does
+not enable the eSpeak fallback until licensing, packaging, and real-book QA justify that dependency.
 
 `KokoroNarrationAdapter` owns the engine-independent English passage contract. It accepts only
 confidently English requests, asks an injected engine for paragraph synthesis, maps timed Kokoro

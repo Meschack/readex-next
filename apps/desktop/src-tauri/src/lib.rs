@@ -3,6 +3,7 @@ mod background_process;
 mod commands;
 mod epub_import;
 pub mod kokoro_narration;
+pub mod kokoro_text;
 pub mod narration_cache;
 mod narration_engine_pack;
 mod narration_manifest;
