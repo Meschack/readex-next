@@ -405,7 +405,7 @@ mod tests {
         engine_is_ready_at, engine_pack, engine_status_at, file_url_path, resolve_catalog_path,
         NativeEngineDownloadClient,
     };
-    use crate::kokoro_manifest::render_kokoro_manifest;
+    use crate::kokoro_manifest::{render_kokoro_manifest, resolve_kokoro_assets};
     use crate::narration_manifest::{
         ManifestNarrationPassage, ManifestNarrationRequest, ManifestNarrationSentence,
     };
@@ -454,6 +454,25 @@ mod tests {
             .starts_with("https://raw.githubusercontent.com/hexgrad/kokoro/"));
         assert_eq!(supertonic.id, "supertonic");
         assert_eq!(supertonic.artifacts.len(), 10);
+    }
+
+    #[test]
+    fn embedded_kokoro_pack_layout_is_renderable() {
+        let pack = super::engine_pack_from_catalog_json("kokoro", super::ENGINE_CATALOG)
+            .expect("embedded Kokoro pack should load");
+        let root = test_root("embedded-kokoro-layout");
+        let destination = root.join(&pack.id).join(&pack.revision);
+
+        for artifact in &pack.artifacts {
+            let path = destination.join(&artifact.relative_path);
+            fs::create_dir_all(path.parent().expect("artifact should have a parent"))
+                .expect("artifact directory should be created");
+            fs::write(path, []).expect("artifact placeholder should be written");
+        }
+
+        assert!(resolve_kokoro_assets(&destination, "kokoro:af-heart").is_ok());
+        assert!(resolve_kokoro_assets(&destination, "kokoro:bf-emma").is_ok());
+        fs::remove_dir_all(root).ok();
     }
 
     #[test]

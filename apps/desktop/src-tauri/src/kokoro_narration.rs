@@ -8,6 +8,7 @@ use ort::{
 };
 use serde::Deserialize;
 
+use crate::error_log::record_native_error;
 use crate::narration_cache::NarrationSentenceSpan;
 
 pub const KOKORO_SAMPLE_RATE: u32 = 24_000;
@@ -37,7 +38,13 @@ impl KokoroRuntime {
     pub fn open(model_path: &Path) -> Result<Self, String> {
         let session = bounded_kokoro_session_builder(kokoro_onnx_thread_count())?
             .commit_from_file(model_path)
-            .map_err(|_| "Sonelle couldn't open English narration files.".to_string())?;
+            .map_err(|error| {
+                record_native_error(
+                    "kokoro.runtime.open",
+                    &format!("model={} error={error}", model_path.display()),
+                );
+                "Sonelle couldn't open English narration files.".to_string()
+            })?;
         Ok(Self {
             model_path: model_path.to_path_buf(),
             session,
@@ -317,9 +324,20 @@ pub fn load_kokoro_voice_style(
 }
 
 fn load_kokoro_config(config_path: &Path) -> Result<KokoroConfig, String> {
-    let bytes = fs::read(config_path)
-        .map_err(|_| "Sonelle couldn't open English narration files.".to_string())?;
-    serde_json::from_slice(&bytes).map_err(|_| "English narration files are invalid.".to_string())
+    let bytes = fs::read(config_path).map_err(|error| {
+        record_native_error(
+            "kokoro.config.read",
+            &format!("config={} error={error}", config_path.display()),
+        );
+        "Sonelle couldn't open English narration files.".to_string()
+    })?;
+    serde_json::from_slice(&bytes).map_err(|error| {
+        record_native_error(
+            "kokoro.config.parse",
+            &format!("config={} error={error}", config_path.display()),
+        );
+        "English narration files are invalid.".to_string()
+    })
 }
 
 fn phonemes_to_input_ids(config: &KokoroConfig, phonemes: &str) -> Vec<i64> {
