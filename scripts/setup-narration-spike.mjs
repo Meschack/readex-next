@@ -36,6 +36,10 @@ export function selectSpikeEngines(config, requestedEngine = "all") {
 }
 
 export function narrationArtifactUrl(model, artifact) {
+  if (typeof artifact.url === "string" && artifact.url.trim() !== "") {
+    return artifact.url;
+  }
+
   const remotePath = artifact.remotePath
     .split("/")
     .map((segment) => encodeURIComponent(segment))

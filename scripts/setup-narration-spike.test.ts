@@ -52,6 +52,18 @@ describe("narration runtime spike setup", () => {
     ).toBe("https://huggingface.co/Acme/voice/resolve/abc123/voice%20styles/F1.json?download=true");
   });
 
+  it("honors an explicit artifact URL when a pack spans repositories", () => {
+    expect(
+      narrationArtifactUrl(
+        { repository: "Acme/voice", revision: "abc123" },
+        {
+          remotePath: "config.json",
+          url: "https://huggingface.co/hexgrad/Kokoro-82M/resolve/abc/config.json"
+        }
+      )
+    ).toBe("https://huggingface.co/hexgrad/Kokoro-82M/resolve/abc/config.json");
+  });
+
   it("requires both the pinned size and SHA-256", async () => {
     const directory = mkdtempSync(join(tmpdir(), "sonelle-narration-spike-"));
     temporaryDirectories.push(directory);
