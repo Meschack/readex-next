@@ -127,6 +127,52 @@ pub fn installed_pack_is_ready(destination: &Path, pack: &NarrationPack) -> bool
     if record.pack_id != pack.id || record.revision != pack.revision {
         return false;
     }
+
+    installed_artifacts_match(destination, &record, pack)
+}
+
+pub fn adopt_compatible_installed_pack(root: &Path, pack: &NarrationPack) -> Result<bool, String> {
+    let destination = root.join(&pack.id).join(&pack.revision);
+    if installed_pack_is_ready(&destination, pack) {
+        return Ok(true);
+    }
+
+    let pack_root = root.join(&pack.id);
+    let candidates = match fs::read_dir(&pack_root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(_) => return Err("Sonelle couldn't inspect its offline narration files.".to_string()),
+    };
+
+    for candidate in candidates.flatten().map(|entry| entry.path()) {
+        if candidate == destination || !candidate.is_dir() {
+            continue;
+        }
+        let Some(record) = read_pack_record(&candidate) else {
+            continue;
+        };
+        if record.pack_id != pack.id || !installed_artifacts_match(&candidate, &record, pack) {
+            continue;
+        }
+
+        if destination.exists() {
+            fs::remove_dir_all(&destination)
+                .map_err(|_| "Sonelle couldn't replace offline narration files.".to_string())?;
+        }
+        fs::rename(&candidate, &destination)
+            .map_err(|_| "Sonelle couldn't reuse offline narration files.".to_string())?;
+        write_pack_record(&destination, pack)?;
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
+fn installed_artifacts_match(
+    destination: &Path,
+    record: &InstalledPackRecord,
+    pack: &NarrationPack,
+) -> bool {
     if record.artifacts.len() != pack.artifacts.len() {
         return false;
     }
@@ -393,8 +439,9 @@ fn finalize_sha256(hasher: Sha256) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        install_narration_pack, installed_pack_is_ready, NarrationPack, NarrationPackArtifact,
-        NarrationPackDownloadClient, NarrationPackDownloadError, NarrationPackInstallStatus,
+        adopt_compatible_installed_pack, install_narration_pack, installed_pack_is_ready,
+        NarrationPack, NarrationPackArtifact, NarrationPackDownloadClient,
+        NarrationPackDownloadError, NarrationPackInstallStatus,
     };
     use std::{
         cell::Cell,
@@ -487,6 +534,42 @@ mod tests {
             &pack
         ));
         assert_eq!(progress.last(), Some(&(7, 7)));
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn adopts_verified_artifacts_when_only_the_pack_revision_changed() {
+        let root = test_root("pack-compatible-revision");
+        let installed = test_pack(
+            "rev-a",
+            "8328d302e64b688068affcad021367dad44992236ca84add38713735f9a9a1f0",
+            7,
+        );
+        let current = test_pack(
+            "rev-b",
+            "8328d302e64b688068affcad021367dad44992236ca84add38713735f9a9a1f0",
+            7,
+        );
+        let client = FakeDownloadClient {
+            payload: b"Sonelle".to_vec(),
+            failure: None,
+            calls: Cell::new(0),
+            range_calls: Cell::new(0),
+            supports_range: true,
+        };
+
+        install_narration_pack(&root, &installed, &client, &mut |_, _| {})
+            .expect("old revision should install");
+        let adopted = adopt_compatible_installed_pack(&root, &current)
+            .expect("compatible revision should be adopted");
+
+        assert!(adopted);
+        assert!(!root.join("kokoro/rev-a").exists());
+        assert!(installed_pack_is_ready(
+            &root.join("kokoro/rev-b"),
+            &current
+        ));
+        assert_eq!(client.calls.get(), 1);
         fs::remove_dir_all(root).ok();
     }
 

@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { clampSidebarWidth, getSidebarResizeBounds, resolveSidebarResize } from "./sidebar-resize";
+import {
+  clampSidebarWidth,
+  getSidebarResizeBounds,
+  resolveSidebarResize,
+  sidebarDefaultWidths
+} from "./sidebar-resize";
 
 describe("sidebar resizing", () => {
+  it("starts both desktop rails wide enough for their content", () => {
+    expect(sidebarDefaultWidths).toEqual({ library: 340, inspector: 400 });
+  });
+
   it("keeps the reader column usable while a rail expands", () => {
     expect(
       getSidebarResizeBounds({

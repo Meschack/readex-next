@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::narration_pack::{
-    install_narration_pack, installed_pack_is_ready, NarrationPack, NarrationPackArtifact,
+    adopt_compatible_installed_pack, install_narration_pack, NarrationPack, NarrationPackArtifact,
     NarrationPackDownloadClient, NarrationPackDownloadError,
 };
 
@@ -226,7 +226,7 @@ pub fn engine_status_at(
     engine_id: &str,
 ) -> Result<NarrationEngineInstallationStatus, String> {
     let pack = engine_pack(engine_id)?;
-    let ready = engine_pack_is_ready(root, &pack);
+    let ready = adopt_compatible_installed_pack(root, &pack)?;
 
     Ok(NarrationEngineInstallationStatus {
         engine_id: engine_id.to_string(),
@@ -247,7 +247,7 @@ pub fn engine_model_revision(engine_id: &str) -> Result<String, String> {
 
 fn engine_is_ready_at(root: &Path, engine_id: &str) -> Result<bool, String> {
     let pack = engine_pack(engine_id)?;
-    Ok(engine_pack_is_ready(root, &pack))
+    adopt_compatible_installed_pack(root, &pack)
 }
 
 fn install_engine_at(
@@ -367,10 +367,6 @@ fn file_url_path(url: &str) -> Option<PathBuf> {
 
 fn pack_destination(root: &Path, pack: &NarrationPack) -> PathBuf {
     root.join(&pack.id).join(&pack.revision)
-}
-
-fn engine_pack_is_ready(root: &Path, pack: &NarrationPack) -> bool {
-    installed_pack_is_ready(&pack_destination(root, pack), pack)
 }
 
 fn pack_size_bytes(pack: &NarrationPack) -> u64 {

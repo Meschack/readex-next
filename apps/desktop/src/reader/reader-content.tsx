@@ -1,4 +1,14 @@
-import { createEffect, createMemo, For, onCleanup, onMount, Show } from "solid-js";
+import {
+  createContext,
+  createEffect,
+  createMemo,
+  For,
+  onCleanup,
+  onMount,
+  Show,
+  useContext,
+  type ParentProps
+} from "solid-js";
 import { Portal } from "solid-js/web";
 import { primaryDefinition, type WordInsight } from "@sonelle/learning";
 import { tokenizeReaderText, type ReaderTextToken } from "@sonelle/text";
@@ -17,27 +27,52 @@ function tokensForSentence(sentence: ReaderSentenceView): ReaderTextToken[] {
   return tokens;
 }
 
+export interface ReaderContentInteractions {
+  isActiveSentence: (sentenceId: string) => boolean;
+  isBookmarkedSentence: (sentenceId: string) => boolean;
+  isSearchHit: (sentenceId: string) => boolean;
+  selectedWord: () => SelectedWord | null;
+  activeWordInsight: () => WordInsight | null;
+  registerSentence: (sentenceId: string, element: HTMLElement) => void;
+  unregisterSentence: (sentenceId: string) => void;
+  selectSentence: (sentenceIndex: number) => void;
+  selectWord: (
+    sentence: ReaderSentenceView,
+    token: Extract<ReaderTextToken, { kind: "word" }>
+  ) => void;
+  clearWord: () => void;
+  saveWord: (insight: WordInsight) => void;
+}
+
+const ReaderContentContext = createContext<ReaderContentInteractions>();
+
+export function ReaderContentProvider(
+  props: ParentProps<{ interactions: ReaderContentInteractions }>
+) {
+  return (
+    <ReaderContentContext.Provider value={props.interactions}>
+      {props.children}
+    </ReaderContentContext.Provider>
+  );
+}
+
+function useReaderContentInteractions(): ReaderContentInteractions {
+  const interactions = useContext(ReaderContentContext);
+  if (interactions == null) {
+    throw new Error("Reader content must be rendered inside ReaderContentProvider.");
+  }
+
+  return interactions;
+}
+
 interface ReaderParagraphProps {
   paragraph: ReaderParagraphView;
   visibleStartIndex: number;
   visibleEndIndex: number;
-  activeSentenceId: string | null;
-  bookmarkedSentenceIds: Set<string>;
-  readerSearchHitIds: Set<string>;
-  selectedWord: SelectedWord | null;
-  activeWordInsight: WordInsight | null;
-  onRegisterSentence: (sentenceId: string, element: HTMLElement) => void;
-  onUnregisterSentence: (sentenceId: string) => void;
-  onSelectSentence: (sentenceIndex: number) => void;
-  onSelectWord: (
-    sentence: ReaderSentenceView,
-    token: Extract<ReaderTextToken, { kind: "word" }>
-  ) => void;
-  onClearWord: () => void;
-  onSaveWord: (insight: WordInsight) => void;
 }
 
 export function ReaderParagraph(props: ReaderParagraphProps) {
+  const interactions = useReaderContentInteractions();
   const visibleSentences = createMemo(() =>
     props.paragraph.sentences.filter(
       (sentence) =>
@@ -46,25 +81,25 @@ export function ReaderParagraph(props: ReaderParagraphProps) {
   );
   const isSelectedWord = (sentenceId: string, token: ReaderTextToken) =>
     token.kind === "word" &&
-    props.selectedWord?.sentenceId === sentenceId &&
-    props.selectedWord?.tokenIndex === token.index;
+    interactions.selectedWord()?.sentenceId === sentenceId &&
+    interactions.selectedWord()?.tokenIndex === token.index;
 
   return (
     <p class="reader-paragraph">
       <For each={visibleSentences()}>
         {(sentence) => {
-          onCleanup(() => props.onUnregisterSentence(sentence.id));
+          onCleanup(() => interactions.unregisterSentence(sentence.id));
 
           return (
             <span
-              ref={(element) => props.onRegisterSentence(sentence.id, element)}
+              ref={(element) => interactions.registerSentence(sentence.id, element)}
               classList={{
                 sentence: true,
-                active: props.activeSentenceId === sentence.id,
-                bookmarked: props.bookmarkedSentenceIds.has(sentence.id),
-                "search-hit": props.readerSearchHitIds.has(sentence.id)
+                active: interactions.isActiveSentence(sentence.id),
+                bookmarked: interactions.isBookmarkedSentence(sentence.id),
+                "search-hit": interactions.isSearchHit(sentence.id)
               }}
-              onClick={() => props.onSelectSentence(sentence.index)}
+              onClick={() => interactions.selectSentence(sentence.index)}
             >
               <span class="sentence-line">
                 <For each={tokensForSentence(sentence)}>
@@ -73,10 +108,12 @@ export function ReaderParagraph(props: ReaderParagraphProps) {
                       token={token}
                       sentence={sentence}
                       selected={isSelectedWord(sentence.id, token)}
-                      insight={isSelectedWord(sentence.id, token) ? props.activeWordInsight : null}
-                      onSelect={props.onSelectWord}
-                      onClear={props.onClearWord}
-                      onSave={props.onSaveWord}
+                      insight={
+                        isSelectedWord(sentence.id, token) ? interactions.activeWordInsight() : null
+                      }
+                      onSelect={interactions.selectWord}
+                      onClear={interactions.clearWord}
+                      onSave={interactions.saveWord}
                     />
                   )}
                 </For>

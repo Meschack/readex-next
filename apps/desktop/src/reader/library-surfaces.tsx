@@ -24,122 +24,87 @@ import {
   WordIcon
 } from "./reader-icons";
 
-interface LibraryRailProps {
-  mode: LibraryRailMode;
-  activeView: AppView;
-  activeBook: ActiveRailBook;
-  activeChapterId: string;
-  chapters: ReaderChapterNavigationItem[];
-  activeBookId: string;
+export interface LibraryCollectionModel {
   books: LibraryBookSummary[];
+  totalBookCount: number;
   bookListState: LibraryBookListState;
-  hasLibraryBooks: boolean;
   query: string;
   filter: LibraryBookFilter;
   importing: boolean;
-  searching: boolean;
   notice: string | null;
-  searchResults: LibrarySearchResultDto[];
   onQueryChange: (query: string) => void;
   onFilterChange: (filter: LibraryBookFilter) => void;
   onImport: () => void;
   onOpenBook: (bookId: string) => void;
   onRetryLibrary: () => void;
   onOpenSample: () => void;
+}
+
+export interface LibraryNavigationModel {
+  collection: LibraryCollectionModel;
+  activeView: AppView;
+  activeBookId: string;
+  searching: boolean;
+  searchResults: LibrarySearchResultDto[];
   onOpenSearchResult: (result: LibrarySearchResultDto) => void;
   onOpenView: (view: AppView) => void;
   onOpenToolTab: (tab: InspectorTab) => void;
+}
+
+export interface FocusedBookModel {
+  book: ActiveRailBook;
+  chapters: ReaderChapterNavigationItem[];
+  activeChapterId: string;
   onOpenChapter: (chapterId: string) => void;
   onReturnToLibrary: () => void;
 }
 
-interface ActiveRailBook {
+export interface LibraryRailModel {
+  mode: LibraryRailMode;
+  navigation: LibraryNavigationModel;
+  focusedBook: FocusedBookModel;
+}
+
+export interface ActiveRailBook {
   title: string;
   author: string;
   coverImageSrc: string | null;
 }
 
-export function LibraryRail(props: LibraryRailProps) {
+export function LibraryRail(componentProps: { model: LibraryRailModel }) {
+  const model = componentProps.model;
+
   return (
     <aside
       classList={{
         "library-rail": true,
-        "focused-book": isBookRailMode(props.mode),
-        "library-mode": !isBookRailMode(props.mode)
+        "focused-book": isBookRailMode(model.mode),
+        "library-mode": !isBookRailMode(model.mode)
       }}
       aria-label="Library"
     >
       <Show
-        when={isBookRailMode(props.mode)}
-        fallback={
-          <NavigationRail
-            activeView={props.activeView}
-            activeBookId={props.activeBookId}
-            books={props.books}
-            bookListState={props.bookListState}
-            hasLibraryBooks={props.hasLibraryBooks}
-            query={props.query}
-            filter={props.filter}
-            importing={props.importing}
-            searching={props.searching}
-            notice={props.notice}
-            searchResults={props.searchResults}
-            onQueryChange={props.onQueryChange}
-            onFilterChange={props.onFilterChange}
-            onImport={props.onImport}
-            onOpenBook={props.onOpenBook}
-            onRetryLibrary={props.onRetryLibrary}
-            onOpenSample={props.onOpenSample}
-            onOpenSearchResult={props.onOpenSearchResult}
-            onOpenView={props.onOpenView}
-            onOpenToolTab={props.onOpenToolTab}
-          />
-        }
+        when={isBookRailMode(model.mode)}
+        fallback={<NavigationRail model={model.navigation} />}
       >
-        <FocusedBookRail
-          book={props.activeBook}
-          chapters={props.chapters}
-          activeChapterId={props.activeChapterId}
-          onOpenChapter={props.onOpenChapter}
-          onReturnToLibrary={props.onReturnToLibrary}
-        />
+        <FocusedBookRail model={model.focusedBook} />
       </Show>
     </aside>
   );
 }
 
-interface NavigationRailProps {
-  activeView: AppView;
-  activeBookId: string;
-  books: LibraryBookSummary[];
-  bookListState: LibraryBookListState;
-  hasLibraryBooks: boolean;
-  query: string;
-  filter: LibraryBookFilter;
-  importing: boolean;
-  searching: boolean;
-  notice: string | null;
-  searchResults: LibrarySearchResultDto[];
-  onQueryChange: (query: string) => void;
-  onFilterChange: (filter: LibraryBookFilter) => void;
-  onImport: () => void;
-  onOpenBook: (bookId: string) => void;
-  onRetryLibrary: () => void;
-  onOpenSample: () => void;
-  onOpenSearchResult: (result: LibrarySearchResultDto) => void;
-  onOpenView: (view: AppView) => void;
-  onOpenToolTab: (tab: InspectorTab) => void;
-}
-
-function NavigationRail(props: NavigationRailProps) {
-  const hasSearchQuery = () => hasLibrarySearchQuery(props.query);
+function NavigationRail(componentProps: { model: LibraryNavigationModel }) {
+  const props = componentProps.model;
+  const collection = props.collection;
+  const hasSearchQuery = () => hasLibrarySearchQuery(collection.query);
 
   return (
     <>
       <header class="side-brand">
         <strong>Library</strong>
         <span>
-          {props.books.length + 1} {props.books.length === 0 ? "book" : "books"} stored locally
+          {collection.books.length + 1} {collection.books.length === 0 ? "book" : "books"} stored
+          locally
         </span>
       </header>
 
@@ -168,15 +133,15 @@ function NavigationRail(props: NavigationRailProps) {
               <input
                 aria-label="Search library"
                 type="search"
-                value={props.query}
+                value={collection.query}
                 placeholder="Search library"
-                onInput={(event) => props.onQueryChange(event.currentTarget.value)}
+                onInput={(event) => collection.onQueryChange(event.currentTarget.value)}
               />
               <select
                 aria-label="Library filter"
-                value={props.filter}
+                value={collection.filter}
                 onChange={(event) =>
-                  props.onFilterChange(event.currentTarget.value as LibraryBookFilter)
+                  collection.onFilterChange(event.currentTarget.value as LibraryBookFilter)
                 }
               >
                 <option value="all">All</option>
@@ -184,9 +149,9 @@ function NavigationRail(props: NavigationRailProps) {
                 <option value="bookmarked">Bookmarked</option>
               </select>
             </div>
-            <Show when={props.notice}>
+            <Show when={collection.notice}>
               {(notice) => (
-                <StateNotice message={notice()} onRetry={props.onRetryLibrary} compact />
+                <StateNotice message={notice()} onRetry={collection.onRetryLibrary} compact />
               )}
             </Show>
             <Show when={hasSearchQuery()}>
@@ -203,12 +168,12 @@ function NavigationRail(props: NavigationRailProps) {
                   active: props.activeBookId === "fixture-book-mara"
                 }}
                 type="button"
-                onClick={props.onOpenSample}
+                onClick={collection.onOpenSample}
               >
                 <span>The Listening Margin</span>
                 <small>Sample book</small>
               </button>
-              <For each={props.books}>
+              <For each={collection.books}>
                 {(book) => (
                   <button
                     classList={{
@@ -216,7 +181,7 @@ function NavigationRail(props: NavigationRailProps) {
                       active: props.activeBookId === book.id
                     }}
                     type="button"
-                    onClick={() => props.onOpenBook(book.id)}
+                    onClick={() => collection.onOpenBook(book.id)}
                   >
                     <span>{book.title}</span>
                     <small>
@@ -227,10 +192,10 @@ function NavigationRail(props: NavigationRailProps) {
                 )}
               </For>
               <BookListState
-                state={props.bookListState}
-                hasLibraryBooks={props.hasLibraryBooks}
-                importing={props.importing}
-                onImport={props.onImport}
+                state={collection.bookListState}
+                hasLibraryBooks={collection.totalBookCount > 0}
+                importing={collection.importing}
+                onImport={collection.onImport}
               />
             </div>
           </section>
@@ -249,11 +214,11 @@ function NavigationRail(props: NavigationRailProps) {
         <button
           class="import-button"
           type="button"
-          disabled={props.importing}
-          onClick={props.onImport}
+          disabled={collection.importing}
+          onClick={collection.onImport}
         >
           <PlusIcon />
-          <span>{props.importing ? "Adding..." : "Add EPUB"}</span>
+          <span>{collection.importing ? "Adding..." : "Add EPUB"}</span>
         </button>
       </section>
 
@@ -277,11 +242,8 @@ function NavigationRail(props: NavigationRailProps) {
   );
 }
 
-interface FocusedBookRailProps extends ActiveBookNavigationProps {
-  onReturnToLibrary: () => void;
-}
-
-function FocusedBookRail(props: FocusedBookRailProps) {
+function FocusedBookRail(componentProps: { model: FocusedBookModel }) {
+  const props = componentProps.model;
   return (
     <section class="book-rail" aria-label="Open book">
       <button
@@ -351,47 +313,37 @@ function ActiveBookNavigation(props: ActiveBookNavigationProps) {
   );
 }
 
-interface LibraryWorkspaceProps {
-  books: LibraryBookSummary[];
-  totalBookCount: number;
-  bookListState: LibraryBookListState;
-  query: string;
-  filter: LibraryBookFilter;
-  importing: boolean;
+export interface LibraryWorkspaceModel {
+  collection: LibraryCollectionModel;
   dropActive: boolean;
-  notice: string | null;
-  onQueryChange: (query: string) => void;
-  onFilterChange: (filter: LibraryBookFilter) => void;
-  onImport: () => void;
   onDragEnter: () => void;
   onDragLeave: () => void;
   onDropFiles: (files: File[]) => void;
-  onOpenBook: (bookId: string) => void;
-  onRetryLibrary: () => void;
-  onOpenSample: () => void;
 }
 
-export function LibraryWorkspace(props: LibraryWorkspaceProps) {
+export function LibraryWorkspace(componentProps: { model: LibraryWorkspaceModel }) {
+  const model = componentProps.model;
+  const props = model.collection;
   const hasNoBooks = () => props.totalBookCount === 0 && props.bookListState !== "loading";
 
   return (
     <section
-      classList={{ "library-workspace": true, "drop-active": props.dropActive }}
+      classList={{ "library-workspace": true, "drop-active": model.dropActive }}
       aria-label="Library workspace"
       onDragEnter={(event) => {
         event.preventDefault();
-        props.onDragEnter();
+        model.onDragEnter();
       }}
       onDragOver={(event) => {
         event.preventDefault();
         if (event.dataTransfer != null) event.dataTransfer.dropEffect = "copy";
       }}
       onDragLeave={(event) => {
-        if (event.currentTarget === event.target) props.onDragLeave();
+        if (event.currentTarget === event.target) model.onDragLeave();
       }}
       onDrop={(event) => {
         event.preventDefault();
-        props.onDropFiles(Array.from(event.dataTransfer?.files ?? []));
+        model.onDropFiles(Array.from(event.dataTransfer?.files ?? []));
       }}
     >
       <section class="library-collection" aria-label="Book collection">
@@ -425,7 +377,7 @@ export function LibraryWorkspace(props: LibraryWorkspaceProps) {
           <span class="library-drop-icon" aria-hidden="true">
             <PlusIcon />
           </span>
-          <strong>{props.dropActive ? "Release to add your book" : "Drop an EPUB here"}</strong>
+          <strong>{model.dropActive ? "Release to add your book" : "Drop an EPUB here"}</strong>
           <small>Or choose a file. Your books stay private and local.</small>
         </button>
 

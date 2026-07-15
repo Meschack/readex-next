@@ -1,4 +1,5 @@
 import { createDomainEvent, type DomainEvent, type DomainEventDispatcher } from "@sonelle/domain";
+import { routeNarrationEngine } from "@sonelle/audio/narration";
 import type { EventSink } from "@sonelle/storage";
 import type { AudioCacheRepository, AudioCacheStatsDto } from "../audio/audio-cache-repository";
 import type {
@@ -239,6 +240,23 @@ export function createCheckingOfflineNarrationProfiles(): Record<
     english: checkingOfflineNarrationProfile("english"),
     multilingual: checkingOfflineNarrationProfile("multilingual")
   };
+}
+
+export function offlineNarrationReadinessMessage(
+  profiles: Readonly<Record<OfflineNarrationProfileId, OfflineNarrationProfileView>>,
+  language: string | null
+): string | null {
+  const engineId = routeNarrationEngine(language, { mode: "hybrid-v1" }).engineId;
+  const profile = profiles[engineId === "kokoro" ? "english" : "multilingual"];
+  if (profile.status === "ready") return null;
+
+  if (profile.status === "preparing") {
+    return `${profile.label} is still being prepared.`;
+  }
+  if (profile.status === "failed") {
+    return `${profile.label} needs attention. Retry the download.`;
+  }
+  return `Download ${profile.label} to listen offline.`;
 }
 
 function checkingOfflineNarrationProfile(

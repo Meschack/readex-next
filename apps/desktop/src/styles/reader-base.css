@@ -66,8 +66,8 @@ svg {
 }
 
 .sonelle-shell {
-  --inspector-rail-width: 320px;
-  --library-rail-width: 260px;
+  --inspector-rail-width: 400px;
+  --library-rail-width: 340px;
   background: var(--paper);
   font-family: var(--ui-font);
   display: grid;

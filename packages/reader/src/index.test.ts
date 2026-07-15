@@ -322,6 +322,8 @@ describe("reader preferences", () => {
       createReaderPreferences({
         toolTab: "settings",
         libraryFilter: "bookmarked",
+        libraryRailWidth: 356.4,
+        inspectorRailWidth: 418.7,
         contentFontSize: 19,
         contentFontFamily: "Literata",
         uiFontFamily: "Inter"
@@ -329,6 +331,8 @@ describe("reader preferences", () => {
     ).toEqual({
       toolTab: "settings",
       libraryFilter: "bookmarked",
+      libraryRailWidth: 356,
+      inspectorRailWidth: 419,
       contentFontSize: 19,
       contentFontFamily: "Literata",
       uiFontFamily: "Inter"
@@ -344,6 +348,8 @@ describe("reader preferences", () => {
     ).toEqual({
       toolTab: "word",
       libraryFilter: "all",
+      libraryRailWidth: 340,
+      inspectorRailWidth: 400,
       contentFontSize: 24,
       contentFontFamily: null,
       uiFontFamily: null
@@ -353,6 +359,8 @@ describe("reader preferences", () => {
         serializeReaderPreferences({
           toolTab: "search",
           libraryFilter: "in-progress",
+          libraryRailWidth: 375,
+          inspectorRailWidth: 425,
           contentFontSize: 13,
           contentFontFamily: "  Source Serif 4  ",
           uiFontFamily: "Bad\nFont"
@@ -361,6 +369,8 @@ describe("reader preferences", () => {
     ).toEqual({
       toolTab: "search",
       libraryFilter: "in-progress",
+      libraryRailWidth: 375,
+      inspectorRailWidth: 425,
       contentFontSize: 14,
       contentFontFamily: "Source Serif 4",
       uiFontFamily: null

@@ -20,6 +20,8 @@ export interface ReaderPlaybackState {
 export interface ReaderPreferences {
   toolTab: ReaderToolTab;
   libraryFilter: ReaderLibraryFilterPreference;
+  libraryRailWidth: number;
+  inspectorRailWidth: number;
   contentFontSize: number;
   contentFontFamily: string | null;
   uiFontFamily: string | null;
@@ -113,6 +115,8 @@ export function createPlaybackState(): ReaderPlaybackState {
 export const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
   toolTab: "word",
   libraryFilter: "all",
+  libraryRailWidth: 340,
+  inspectorRailWidth: 400,
   contentFontSize: 16,
   contentFontFamily: null,
   uiFontFamily: null
@@ -124,12 +128,25 @@ export function createReaderPreferences(input: Partial<ReaderPreferences> = {}):
     libraryFilter: isReaderLibraryFilter(input.libraryFilter)
       ? input.libraryFilter
       : DEFAULT_READER_PREFERENCES.libraryFilter,
+    libraryRailWidth: normalizeRailWidth(
+      input.libraryRailWidth,
+      DEFAULT_READER_PREFERENCES.libraryRailWidth
+    ),
+    inspectorRailWidth: normalizeRailWidth(
+      input.inspectorRailWidth,
+      DEFAULT_READER_PREFERENCES.inspectorRailWidth
+    ),
     contentFontSize: clampContentFontSize(
       input.contentFontSize ?? DEFAULT_READER_PREFERENCES.contentFontSize
     ),
     contentFontFamily: normalizeFontFamily(input.contentFontFamily),
     uiFontFamily: normalizeFontFamily(input.uiFontFamily)
   };
+}
+
+function normalizeRailWidth(value: number | undefined, fallback: number): number {
+  if (value == null || !Number.isFinite(value)) return fallback;
+  return Math.min(600, Math.max(180, Math.round(value)));
 }
 
 export function serializeReaderPreferences(preferences: ReaderPreferences): string {

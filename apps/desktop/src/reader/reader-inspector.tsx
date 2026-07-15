@@ -25,52 +25,17 @@ import {
   WordIcon
 } from "./reader-icons";
 
-interface ReaderInspectorProps {
+export interface ReaderInspectorModel {
   tab: InspectorTab;
-  insight: WordInsight | null;
-  savedWords: SavedDictionaryEntry[];
-  readerSearchQuery: string;
-  readerSearchResults: ReaderSearchResult<ReaderSentenceView>[];
-  bookmarks: LibraryBookmarkDto[];
-  activeBookmark: LibraryBookmarkDto | null;
-  activeSentence: ReaderSentenceView | null;
-  bookmarkNotice: string | null;
-  audioSettings: AudioSettings;
-  voiceInstallation: OfflineVoiceView;
-  offlineLibrary: "individual-voice" | "language-pack";
-  narrationVoices: readonly NarrationVoice[];
-  offlineNarrationProfiles: Record<OfflineNarrationProfileId, OfflineNarrationProfileView>;
-  readerContentFontSize: number;
-  readerContentFontFamily: string | null;
-  uiFontFamily: string | null;
-  systemFontFamilies: readonly string[];
-  audioCacheStats: PreparedAudioView | null;
-  audioCacheNotice: string | null;
-  exportNotice: string | null;
+  word: ReaderWordInspectorModel;
+  search: ReaderSearchInspectorModel;
+  bookmarks: ReaderBookmarkInspectorModel;
+  settings: ReaderSettingsInspectorModel;
   onTabChange: (tab: InspectorTab) => void;
-  onSaveWord: (insight: WordInsight) => void;
-  onForgetWord: (surface: string) => void;
-  onSelectSavedWord: (word: SavedDictionaryEntry) => void;
-  onReaderSearchQueryChange: (query: string) => void;
-  onReaderSearchResult: (result: ReaderSearchResult<ReaderSentenceView>) => void;
-  onReaderSearchInputReady: (input: HTMLInputElement) => void;
-  onToggleBookmark: () => void;
-  onOpenBookmark: (bookmark: LibraryBookmarkDto) => void;
-  onDeleteBookmark: (bookmarkId: string) => void;
-  onAudioSettingsChange: (settings: Partial<AudioSettings>) => void;
-  onResetAudioSettings: () => void;
-  onInstallVoice: () => void;
-  onInstallNarrationProfile: (profileId: OfflineNarrationProfileId) => void;
-  onRefreshEngines: () => void;
-  onReaderContentFontSizeChange: (fontSize: number) => void;
-  onReaderContentFontFamilyChange: (fontFamily: string | null) => void;
-  onUiFontFamilyChange: (fontFamily: string | null) => void;
-  onRefreshCache: () => void;
-  onClearCache: () => void;
-  onExportBook: () => void;
 }
 
-export function ReaderInspector(props: ReaderInspectorProps) {
+export function ReaderInspector(componentProps: { model: ReaderInspectorModel }) {
+  const model = componentProps.model;
   const tabs: Array<{ id: InspectorTab; label: string; icon: () => JSX.Element }> = [
     { id: "word", label: "Word", icon: WordIcon },
     { id: "search", label: "Search", icon: SearchIcon },
@@ -87,11 +52,11 @@ export function ReaderInspector(props: ReaderInspectorProps) {
 
             return (
               <button
-                classList={{ active: props.tab === tab.id }}
+                classList={{ active: model.tab === tab.id }}
                 type="button"
                 role="tab"
-                aria-selected={props.tab === tab.id}
-                onClick={() => props.onTabChange(tab.id)}
+                aria-selected={model.tab === tab.id}
+                onClick={() => model.onTabChange(tab.id)}
               >
                 <Icon />
                 <span>{tab.label}</span>
@@ -102,65 +67,21 @@ export function ReaderInspector(props: ReaderInspectorProps) {
       </div>
 
       <div class="inspector-content">
-        {props.tab === "word" ? (
-          <WordPanel
-            insight={props.insight}
-            savedWords={props.savedWords}
-            onSave={props.onSaveWord}
-            onForget={props.onForgetWord}
-            onSelectSavedWord={props.onSelectSavedWord}
-          />
-        ) : props.tab === "search" ? (
-          <SearchPanel
-            query={props.readerSearchQuery}
-            results={props.readerSearchResults}
-            onQueryChange={props.onReaderSearchQueryChange}
-            onOpenResult={props.onReaderSearchResult}
-            onInputReady={props.onReaderSearchInputReady}
-          />
-        ) : props.tab === "bookmarks" ? (
-          <BookmarkPanel
-            bookmarks={props.bookmarks}
-            activeBookmark={props.activeBookmark}
-            activeSentence={props.activeSentence}
-            notice={props.bookmarkNotice}
-            onToggleActive={props.onToggleBookmark}
-            onOpenBookmark={props.onOpenBookmark}
-            onDeleteBookmark={props.onDeleteBookmark}
-          />
+        {model.tab === "word" ? (
+          <WordPanel model={model.word} />
+        ) : model.tab === "search" ? (
+          <SearchPanel model={model.search} />
+        ) : model.tab === "bookmarks" ? (
+          <BookmarkPanel model={model.bookmarks} />
         ) : (
-          <SettingsPanel
-            audioSettings={props.audioSettings}
-            voiceInstallation={props.voiceInstallation}
-            offlineLibrary={props.offlineLibrary}
-            narrationVoices={props.narrationVoices}
-            offlineNarrationProfiles={props.offlineNarrationProfiles}
-            readerContentFontSize={props.readerContentFontSize}
-            readerContentFontFamily={props.readerContentFontFamily}
-            uiFontFamily={props.uiFontFamily}
-            systemFontFamilies={props.systemFontFamilies}
-            audioCacheStats={props.audioCacheStats}
-            audioCacheNotice={props.audioCacheNotice}
-            exportNotice={props.exportNotice}
-            onAudioSettingsChange={props.onAudioSettingsChange}
-            onInstallVoice={props.onInstallVoice}
-            onInstallNarrationProfile={props.onInstallNarrationProfile}
-            onRefreshEngines={props.onRefreshEngines}
-            onReaderContentFontSizeChange={props.onReaderContentFontSizeChange}
-            onReaderContentFontFamilyChange={props.onReaderContentFontFamilyChange}
-            onUiFontFamilyChange={props.onUiFontFamilyChange}
-            onResetAudioSettings={props.onResetAudioSettings}
-            onRefreshCache={props.onRefreshCache}
-            onClearCache={props.onClearCache}
-            onExportBook={props.onExportBook}
-          />
+          <SettingsPanel model={model.settings} />
         )}
       </div>
     </aside>
   );
 }
 
-interface WordPanelProps {
+export interface ReaderWordInspectorModel {
   insight: WordInsight | null;
   savedWords: SavedDictionaryEntry[];
   onSave: (insight: WordInsight) => void;
@@ -168,7 +89,8 @@ interface WordPanelProps {
   onSelectSavedWord: (word: SavedDictionaryEntry) => void;
 }
 
-function WordPanel(props: WordPanelProps) {
+function WordPanel(componentProps: { model: ReaderWordInspectorModel }) {
+  const props = componentProps.model;
   return (
     <Show
       when={props.insight}
@@ -262,7 +184,7 @@ function WordPanel(props: WordPanelProps) {
   );
 }
 
-interface SearchPanelProps {
+export interface ReaderSearchInspectorModel {
   query: string;
   results: ReaderSearchResult<ReaderSentenceView>[];
   onQueryChange: (query: string) => void;
@@ -270,7 +192,8 @@ interface SearchPanelProps {
   onInputReady: (input: HTMLInputElement) => void;
 }
 
-function SearchPanel(props: SearchPanelProps) {
+function SearchPanel(componentProps: { model: ReaderSearchInspectorModel }) {
+  const props = componentProps.model;
   const hasQuery = () => props.query.trim().length > 0;
 
   return (
@@ -309,7 +232,7 @@ function SearchPanel(props: SearchPanelProps) {
   );
 }
 
-interface BookmarkPanelProps {
+export interface ReaderBookmarkInspectorModel {
   bookmarks: LibraryBookmarkDto[];
   activeBookmark: LibraryBookmarkDto | null;
   activeSentence: ReaderSentenceView | null;
@@ -319,7 +242,8 @@ interface BookmarkPanelProps {
   onDeleteBookmark: (bookmarkId: string) => void;
 }
 
-function BookmarkPanel(props: BookmarkPanelProps) {
+function BookmarkPanel(componentProps: { model: ReaderBookmarkInspectorModel }) {
+  const props = componentProps.model;
   return (
     <section class="inspector-panel bookmark-panel" aria-label="Bookmarks">
       <Show when={props.activeSentence}>
@@ -377,7 +301,7 @@ function BookmarkPanel(props: BookmarkPanelProps) {
   );
 }
 
-interface SettingsPanelProps {
+export interface ReaderSettingsInspectorModel {
   audioSettings: AudioSettings;
   voiceInstallation: OfflineVoiceView;
   offlineLibrary: "individual-voice" | "language-pack";
@@ -403,7 +327,8 @@ interface SettingsPanelProps {
   onExportBook: () => void;
 }
 
-function SettingsPanel(props: SettingsPanelProps) {
+function SettingsPanel(componentProps: { model: ReaderSettingsInspectorModel }) {
+  const props = componentProps.model;
   return (
     <section class="inspector-panel settings-panel" aria-label="Settings">
       <SpeedSelect

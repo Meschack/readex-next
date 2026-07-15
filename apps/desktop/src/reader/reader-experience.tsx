@@ -2,6 +2,7 @@ import {
   batch,
   createEffect,
   createMemo,
+  createSelector,
   createSignal,
   For,
   onCleanup,
@@ -42,12 +43,16 @@ import {
 import { toFriendlyLibraryError } from "../library/library-errors";
 import type { LibraryBookmarkDto, LibrarySearchResultDto } from "../library/library-contracts";
 import { ChapterNavigator, PlaybackRail, ProductBar, ReaderTopAppBar } from "./reader-chrome";
-import { ReaderParagraph } from "./reader-content";
+import {
+  ReaderContentProvider,
+  ReaderParagraph,
+  type ReaderContentInteractions
+} from "./reader-content";
 import { NarrationToast } from "./reader-feedback";
 import type { LibraryBookSummary } from "../library/library-models";
 import type { AppView, InspectorTab, SelectedWord } from "./reader-experience-types";
 import { cssFontFamilyStack, isTypingTarget } from "./reader-formatting";
-import { ReaderInspector } from "./reader-inspector";
+import { ReaderInspector, type ReaderInspectorModel } from "./reader-inspector";
 import {
   clampSidebarWidth,
   getSidebarResizeBounds,
@@ -66,6 +71,7 @@ import { createReaderLibraryApplication } from "./reader-library-application";
 import { createReaderLibrarySearchWorkflow } from "./reader-library-search-workflow";
 import {
   createCheckingOfflineNarrationProfiles,
+  offlineNarrationReadinessMessage,
   createReaderOfflineNarrationApplication,
   type OfflineVoiceView,
   type PreparedAudioView
@@ -79,7 +85,13 @@ import {
   createReaderExperienceDependencies,
   type ReaderExperienceDependencies
 } from "./reader-dependencies";
-import { LibraryRail, LibraryWorkspace } from "./library-surfaces";
+import {
+  LibraryRail,
+  LibraryWorkspace,
+  type LibraryCollectionModel,
+  type LibraryRailModel,
+  type LibraryWorkspaceModel
+} from "./library-surfaces";
 import {
   buildFixtureReaderView,
   buildReaderViewFromDocument,
@@ -136,16 +148,26 @@ export function ReaderExperience(props: ReaderExperienceProps) {
   );
   const [uiFontFamily, setUiFontFamily] = createSignal(readerPreferences.uiFontFamily);
   const [systemFontFamilies, setSystemFontFamilies] = createSignal<readonly string[]>([]);
+  const [preferredLibraryRailWidth, setPreferredLibraryRailWidth] = createSignal(
+    readerPreferences.libraryRailWidth
+  );
+  const [preferredInspectorRailWidth, setPreferredInspectorRailWidth] = createSignal(
+    readerPreferences.inspectorRailWidth
+  );
   const currentReaderPreferences = () =>
     createReaderPreferences({
       toolTab: inspectorTab(),
       libraryFilter: libraryFilter(),
+      libraryRailWidth: preferredLibraryRailWidth(),
+      inspectorRailWidth: preferredInspectorRailWidth(),
       contentFontSize: readerContentFontSize(),
       contentFontFamily: readerContentFontFamily(),
       uiFontFamily: uiFontFamily()
     });
-  const [libraryRailWidth, setLibraryRailWidth] = createSignal(sidebarDefaultWidths.library);
-  const [inspectorRailWidth, setInspectorRailWidth] = createSignal(sidebarDefaultWidths.inspector);
+  const [libraryRailWidth, setLibraryRailWidth] = createSignal(readerPreferences.libraryRailWidth);
+  const [inspectorRailWidth, setInspectorRailWidth] = createSignal(
+    readerPreferences.inspectorRailWidth
+  );
   const [activeView, setActiveView] = createSignal<AppView>("reader");
   const [libraryRailMode, setLibraryRailMode] = createSignal(
     createLibraryRailMode(sampleReader.book.id)
@@ -282,9 +304,11 @@ export function ReaderExperience(props: ReaderExperienceProps) {
       currentSettings: audioSettings,
       narrationAudible,
       narrationReadinessMessage: () =>
-        usesLanguagePacks || voiceInstallation().status === "ready"
-          ? null
-          : "Download this voice to listen offline.",
+        usesLanguagePacks
+          ? offlineNarrationReadinessMessage(offlineNarrationProfiles(), reader().book.language)
+          : voiceInstallation().status === "ready"
+            ? null
+            : "Download this voice to listen offline.",
       projectPlayback: setPlayback,
       projectNotice: (message) => {
         if (message != null) setInspectorTab("settings");
@@ -356,6 +380,7 @@ export function ReaderExperience(props: ReaderExperienceProps) {
 
   const activeSentence = createMemo(() => reader().sentences[playback().activeSentenceIndex]);
   const highlight = createMemo(() => highlightSentence(activeSentence()?.id ?? null));
+  const isActiveSentence = createSelector(() => highlight().activeSentenceId);
   const visibleSentenceRange = createMemo(() => {
     return calculateSentenceRenderWindow({
       activeSentenceIndex: playback().activeSentenceIndex,
@@ -517,8 +542,49 @@ export function ReaderExperience(props: ReaderExperienceProps) {
     });
 
   const clampSidebarWidthsToViewport = () => {
-    setLibraryRailWidth((width) => clampSidebarWidth(width, getSidebarBounds("library")));
-    setInspectorRailWidth((width) => clampSidebarWidth(width, getSidebarBounds("inspector")));
+    const viewportWidth = window.innerWidth;
+    const libraryWidth = clampSidebarWidth(
+      preferredLibraryRailWidth(),
+      getSidebarResizeBounds({
+        sidebar: "library",
+        viewportWidth,
+        oppositeSidebarWidth: preferredInspectorRailWidth()
+      })
+    );
+    const inspectorWidth = clampSidebarWidth(
+      preferredInspectorRailWidth(),
+      getSidebarResizeBounds({
+        sidebar: "inspector",
+        viewportWidth,
+        oppositeSidebarWidth: libraryWidth
+      })
+    );
+    const reconciledLibraryWidth = clampSidebarWidth(
+      preferredLibraryRailWidth(),
+      getSidebarResizeBounds({
+        sidebar: "library",
+        viewportWidth,
+        oppositeSidebarWidth: inspectorWidth
+      })
+    );
+
+    batch(() => {
+      setLibraryRailWidth(reconciledLibraryWidth);
+      setInspectorRailWidth(inspectorWidth);
+    });
+  };
+
+  const updateLibraryRailWidth = (width: number) => {
+    batch(() => {
+      setPreferredLibraryRailWidth(width);
+      setLibraryRailWidth(width);
+    });
+  };
+  const updateInspectorRailWidth = (width: number) => {
+    batch(() => {
+      setPreferredInspectorRailWidth(width);
+      setInspectorRailWidth(width);
+    });
   };
 
   onMount(() => {
@@ -594,6 +660,8 @@ export function ReaderExperience(props: ReaderExperienceProps) {
       createReaderPreferences({
         toolTab: inspectorTab(),
         libraryFilter: libraryFilter(),
+        libraryRailWidth: preferredLibraryRailWidth(),
+        inspectorRailWidth: preferredInspectorRailWidth(),
         ...typography
       })
     );
@@ -771,6 +839,203 @@ export function ReaderExperience(props: ReaderExperienceProps) {
   const openLibrarySearchResult = navigationApplication.openLibrarySearchResult;
   const openReaderSearchResult = navigationApplication.openReaderSearchResult;
 
+  const libraryCollectionModel = {
+    get books() {
+      return filteredBooks();
+    },
+    get totalBookCount() {
+      return libraryBooks().length;
+    },
+    get bookListState() {
+      return libraryBookListState();
+    },
+    get query() {
+      return libraryQuery();
+    },
+    get filter() {
+      return libraryFilter();
+    },
+    get importing() {
+      return isImporting();
+    },
+    get notice() {
+      return libraryNotice();
+    },
+    onQueryChange: setLibraryQuery,
+    onFilterChange: setLibraryFilter,
+    onImport: libraryApplication.importFromDialog,
+    onOpenBook: libraryApplication.open,
+    onRetryLibrary: libraryApplication.refresh,
+    onOpenSample: openSampleReader
+  } satisfies LibraryCollectionModel;
+
+  const libraryRailModel = {
+    get mode() {
+      return libraryRailMode();
+    },
+    navigation: {
+      collection: libraryCollectionModel,
+      get activeView() {
+        return activeView();
+      },
+      get activeBookId() {
+        return reader().book.id;
+      },
+      get searching() {
+        return isLibrarySearching();
+      },
+      get searchResults() {
+        return librarySearchResults();
+      },
+      onOpenSearchResult: openLibrarySearchResult,
+      onOpenView: openAppView,
+      onOpenToolTab: setInspectorTab
+    },
+    focusedBook: {
+      get book() {
+        return reader().book;
+      },
+      get chapters() {
+        return reader().chapters;
+      },
+      get activeChapterId() {
+        return reader().chapter.id;
+      },
+      onOpenChapter: openChapter,
+      onReturnToLibrary: () => openAppView("library")
+    }
+  } satisfies LibraryRailModel;
+
+  const libraryWorkspaceModel = {
+    collection: libraryCollectionModel,
+    get dropActive() {
+      return isLibraryDropTarget();
+    },
+    onDragEnter: () => setIsLibraryDropTarget(true),
+    onDragLeave: () => setIsLibraryDropTarget(false),
+    onDropFiles: libraryApplication.handleBrowserDrop
+  } satisfies LibraryWorkspaceModel;
+
+  const inspectorModel = {
+    get tab() {
+      return inspectorTab();
+    },
+    onTabChange: setInspectorTab,
+    word: {
+      get insight() {
+        return activeWordInsight();
+      },
+      get savedWords() {
+        return savedWords();
+      },
+      onSave: (insight) => void wordInsightWorkflow.save(insight),
+      onForget: (surface) => void wordInsightWorkflow.forget(surface),
+      onSelectSavedWord: selectSavedWord
+    },
+    search: {
+      get query() {
+        return readerSearchQuery();
+      },
+      get results() {
+        return readerSearchResults();
+      },
+      onQueryChange: setReaderSearchQuery,
+      onOpenResult: openReaderSearchResult,
+      onInputReady(input) {
+        readerSearchInput = input;
+      }
+    },
+    bookmarks: {
+      get bookmarks() {
+        return currentBookBookmarks();
+      },
+      get activeBookmark() {
+        return activeBookmark();
+      },
+      get activeSentence() {
+        return activeSentence() ?? null;
+      },
+      get notice() {
+        return bookmarkNotice();
+      },
+      onToggleActive: toggleActiveBookmark,
+      onOpenBookmark: openBookmark,
+      onDeleteBookmark: deleteBookmark
+    },
+    settings: {
+      get audioSettings() {
+        return audioSettings();
+      },
+      get voiceInstallation() {
+        return voiceInstallation();
+      },
+      offlineLibrary: narrationService.capabilities.offlineLibrary,
+      get narrationVoices() {
+        return narrationVoices();
+      },
+      get offlineNarrationProfiles() {
+        return offlineNarrationProfiles();
+      },
+      get readerContentFontSize() {
+        return readerContentFontSize();
+      },
+      get readerContentFontFamily() {
+        return readerContentFontFamily();
+      },
+      get uiFontFamily() {
+        return uiFontFamily();
+      },
+      get systemFontFamilies() {
+        return systemFontFamilies();
+      },
+      get audioCacheStats() {
+        return audioCacheStats();
+      },
+      get audioCacheNotice() {
+        return audioCacheNotice();
+      },
+      get exportNotice() {
+        return exportNotice();
+      },
+      onAudioSettingsChange: updateAudioSettings,
+      onInstallVoice: offlineNarrationApplication.requestSelectedVoice,
+      onInstallNarrationProfile: offlineNarrationApplication.requestNarrationProfile,
+      onRefreshEngines: offlineNarrationApplication.refreshNarrationFiles,
+      onReaderContentFontSizeChange: updateReaderContentFontSize,
+      onReaderContentFontFamilyChange: updateReaderContentFontFamily,
+      onUiFontFamilyChange: updateUiFontFamily,
+      onResetAudioSettings: narrationSettingsWorkflow.reset,
+      onRefreshCache: offlineNarrationApplication.refreshPreparedAudio,
+      onClearCache: offlineNarrationApplication.clearPreparedAudio,
+      onExportBook: bookExportWorkflow.request
+    }
+  } satisfies ReaderInspectorModel;
+
+  const readerContentInteractions = {
+    isActiveSentence,
+    isBookmarkedSentence: (sentenceId) => bookmarkedSentenceIds().has(sentenceId),
+    isSearchHit: (sentenceId) => readerSearchHitIds().has(sentenceId),
+    selectedWord,
+    activeWordInsight,
+    registerSentence(sentenceId, element) {
+      sentenceElements.set(sentenceId, element);
+    },
+    unregisterSentence(sentenceId) {
+      sentenceElements.delete(sentenceId);
+    },
+    selectSentence(sentenceIndex) {
+      selectSentence(sentenceIndex);
+      setInspectorTab("bookmarks");
+    },
+    selectWord,
+    clearWord() {
+      setSelectedWord(null);
+    },
+    saveWord(insight) {
+      void wordInsightWorkflow.save(insight);
+    }
+  } satisfies ReaderContentInteractions;
+
   const subscriptions = [
     eventDispatcher.subscribe("ReaderOpened", (event) =>
       libraryApplication.refreshBookmarks(event.payload.bookId)
@@ -795,66 +1060,19 @@ export function ReaderExperience(props: ReaderExperienceProps) {
       }}
     >
       <ProductBar />
-      <LibraryRail
-        mode={libraryRailMode()}
-        activeView={activeView()}
-        activeBook={reader().book}
-        activeChapterId={reader().chapter.id}
-        chapters={reader().chapters}
-        activeBookId={reader().book.id}
-        books={filteredBooks()}
-        bookListState={libraryBookListState()}
-        hasLibraryBooks={libraryBooks().length > 0}
-        query={libraryQuery()}
-        filter={libraryFilter()}
-        importing={isImporting()}
-        searching={isLibrarySearching()}
-        notice={libraryNotice()}
-        searchResults={librarySearchResults()}
-        onQueryChange={setLibraryQuery}
-        onFilterChange={setLibraryFilter}
-        onImport={libraryApplication.importFromDialog}
-        onOpenBook={libraryApplication.open}
-        onRetryLibrary={libraryApplication.refresh}
-        onOpenSample={openSampleReader}
-        onOpenSearchResult={openLibrarySearchResult}
-        onOpenView={openAppView}
-        onOpenToolTab={setInspectorTab}
-        onOpenChapter={openChapter}
-        onReturnToLibrary={() => openAppView("library")}
-      />
+      <LibraryRail model={libraryRailModel} />
       <SidebarResizeHandle
         sidebar="library"
         edge="right"
         width={libraryRailWidth()}
         defaultWidth={sidebarDefaultWidths.library}
         getBounds={() => getSidebarBounds("library")}
-        onWidthChange={setLibraryRailWidth}
+        onWidthChange={updateLibraryRailWidth}
       />
 
       <Show
         when={activeView() === "reader"}
-        fallback={
-          <LibraryWorkspace
-            books={filteredBooks()}
-            totalBookCount={libraryBooks().length}
-            bookListState={libraryBookListState()}
-            query={libraryQuery()}
-            filter={libraryFilter()}
-            importing={isImporting()}
-            dropActive={isLibraryDropTarget()}
-            notice={libraryNotice()}
-            onQueryChange={setLibraryQuery}
-            onFilterChange={setLibraryFilter}
-            onImport={libraryApplication.importFromDialog}
-            onDragEnter={() => setIsLibraryDropTarget(true)}
-            onDragLeave={() => setIsLibraryDropTarget(false)}
-            onDropFiles={libraryApplication.handleBrowserDrop}
-            onOpenBook={libraryApplication.open}
-            onRetryLibrary={libraryApplication.refresh}
-            onOpenSample={openSampleReader}
-          />
-        }
+        fallback={<LibraryWorkspace model={libraryWorkspaceModel} />}
       >
         <section class="reader-surface" aria-label="Reader">
           <ReaderTopAppBar
@@ -874,131 +1092,70 @@ export function ReaderExperience(props: ReaderExperienceProps) {
             onOpenChapter={openChapter}
           />
 
-          <div class="reader-layout">
-            <div class="audio-margin" aria-hidden="true">
-              <For each={visibleSentences()}>
-                {(sentence) => (
-                  <span
-                    classList={{
-                      marker: true,
-                      active: highlight().activeSentenceId === sentence.id,
-                      bookmarked: bookmarkedSentenceIds().has(sentence.id)
-                    }}
-                  />
-                )}
-              </For>
-            </div>
+          <ReaderContentProvider interactions={readerContentInteractions}>
+            <div class="reader-layout">
+              <div class="audio-margin" aria-hidden="true">
+                <For each={visibleSentences()}>
+                  {(sentence) => (
+                    <span
+                      classList={{
+                        marker: true,
+                        active: highlight().activeSentenceId === sentence.id,
+                        bookmarked: bookmarkedSentenceIds().has(sentence.id)
+                      }}
+                    />
+                  )}
+                </For>
+              </div>
 
-            <article
-              class="page"
-              aria-label={`${reader().chapter.title} text`}
-              style={{ "font-size": `${readerContentFontSize()}px` }}
-            >
-              <h1 class="article-title">{reader().chapter.title}</h1>
-              <Show when={visibleSentenceRange().hiddenBefore > 0}>
-                <button
-                  class="sentence-window-jump"
-                  type="button"
-                  onClick={() => selectSentence(visibleSentenceRange().start - 1)}
-                >
-                  Previous {Math.min(renderedSentenceLead, visibleSentenceRange().hiddenBefore)}{" "}
-                  sentences
-                </button>
-              </Show>
-              <For each={visibleParagraphs()}>
-                {(paragraph) => (
-                  <ReaderParagraph
-                    paragraph={paragraph}
-                    visibleStartIndex={visibleSentenceRange().start}
-                    visibleEndIndex={visibleSentenceRange().end}
-                    activeSentenceId={highlight().activeSentenceId}
-                    bookmarkedSentenceIds={bookmarkedSentenceIds()}
-                    readerSearchHitIds={readerSearchHitIds()}
-                    selectedWord={selectedWord()}
-                    activeWordInsight={activeWordInsight()}
-                    onRegisterSentence={(sentenceId, element) => {
-                      sentenceElements.set(sentenceId, element);
-                    }}
-                    onUnregisterSentence={(sentenceId) => {
-                      sentenceElements.delete(sentenceId);
-                    }}
-                    onSelectSentence={(sentenceIndex) => {
-                      selectSentence(sentenceIndex);
-                      setInspectorTab("bookmarks");
-                    }}
-                    onSelectWord={selectWord}
-                    onClearWord={() => setSelectedWord(null)}
-                    onSaveWord={(insight) => void wordInsightWorkflow.save(insight)}
-                  />
-                )}
-              </For>
-              <Show when={visibleSentenceRange().hiddenAfter > 0}>
-                <button
-                  class="sentence-window-jump"
-                  type="button"
-                  onClick={() => selectSentence(visibleSentenceRange().end)}
-                >
-                  Next {Math.min(renderedSentenceTrail, visibleSentenceRange().hiddenAfter)}{" "}
-                  sentences
-                </button>
-              </Show>
-            </article>
-          </div>
+              <article
+                class="page"
+                aria-label={`${reader().chapter.title} text`}
+                style={{ "font-size": `${readerContentFontSize()}px` }}
+              >
+                <h1 class="article-title">{reader().chapter.title}</h1>
+                <Show when={visibleSentenceRange().hiddenBefore > 0}>
+                  <button
+                    class="sentence-window-jump"
+                    type="button"
+                    onClick={() => selectSentence(visibleSentenceRange().start - 1)}
+                  >
+                    Previous {Math.min(renderedSentenceLead, visibleSentenceRange().hiddenBefore)}{" "}
+                    sentences
+                  </button>
+                </Show>
+                <For each={visibleParagraphs()}>
+                  {(paragraph) => (
+                    <ReaderParagraph
+                      paragraph={paragraph}
+                      visibleStartIndex={visibleSentenceRange().start}
+                      visibleEndIndex={visibleSentenceRange().end}
+                    />
+                  )}
+                </For>
+                <Show when={visibleSentenceRange().hiddenAfter > 0}>
+                  <button
+                    class="sentence-window-jump"
+                    type="button"
+                    onClick={() => selectSentence(visibleSentenceRange().end)}
+                  >
+                    Next {Math.min(renderedSentenceTrail, visibleSentenceRange().hiddenAfter)}{" "}
+                    sentences
+                  </button>
+                </Show>
+              </article>
+            </div>
+          </ReaderContentProvider>
         </section>
 
-        <ReaderInspector
-          tab={inspectorTab()}
-          insight={activeWordInsight()}
-          savedWords={savedWords()}
-          readerSearchQuery={readerSearchQuery()}
-          readerSearchResults={readerSearchResults()}
-          bookmarks={currentBookBookmarks()}
-          activeBookmark={activeBookmark()}
-          activeSentence={activeSentence() ?? null}
-          bookmarkNotice={bookmarkNotice()}
-          audioSettings={audioSettings()}
-          voiceInstallation={voiceInstallation()}
-          offlineLibrary={narrationService.capabilities.offlineLibrary}
-          narrationVoices={narrationVoices()}
-          offlineNarrationProfiles={offlineNarrationProfiles()}
-          readerContentFontSize={readerContentFontSize()}
-          readerContentFontFamily={readerContentFontFamily()}
-          uiFontFamily={uiFontFamily()}
-          systemFontFamilies={systemFontFamilies()}
-          audioCacheStats={audioCacheStats()}
-          audioCacheNotice={audioCacheNotice()}
-          exportNotice={exportNotice()}
-          onTabChange={setInspectorTab}
-          onSaveWord={(insight) => void wordInsightWorkflow.save(insight)}
-          onForgetWord={(surface) => void wordInsightWorkflow.forget(surface)}
-          onSelectSavedWord={selectSavedWord}
-          onReaderSearchQueryChange={setReaderSearchQuery}
-          onReaderSearchResult={openReaderSearchResult}
-          onReaderSearchInputReady={(input) => {
-            readerSearchInput = input;
-          }}
-          onToggleBookmark={toggleActiveBookmark}
-          onOpenBookmark={openBookmark}
-          onDeleteBookmark={deleteBookmark}
-          onAudioSettingsChange={updateAudioSettings}
-          onResetAudioSettings={narrationSettingsWorkflow.reset}
-          onInstallVoice={offlineNarrationApplication.requestSelectedVoice}
-          onInstallNarrationProfile={offlineNarrationApplication.requestNarrationProfile}
-          onRefreshEngines={offlineNarrationApplication.refreshNarrationFiles}
-          onReaderContentFontSizeChange={updateReaderContentFontSize}
-          onReaderContentFontFamilyChange={updateReaderContentFontFamily}
-          onUiFontFamilyChange={updateUiFontFamily}
-          onRefreshCache={offlineNarrationApplication.refreshPreparedAudio}
-          onClearCache={offlineNarrationApplication.clearPreparedAudio}
-          onExportBook={bookExportWorkflow.request}
-        />
+        <ReaderInspector model={inspectorModel} />
         <SidebarResizeHandle
           sidebar="inspector"
           edge="left"
           width={inspectorRailWidth()}
           defaultWidth={sidebarDefaultWidths.inspector}
           getBounds={() => getSidebarBounds("inspector")}
-          onWidthChange={setInspectorRailWidth}
+          onWidthChange={updateInspectorRailWidth}
         />
 
         <Show

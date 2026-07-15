@@ -126,6 +126,11 @@ pub fn prepare_manifest_narration(
     ensure_narration_not_cancelled(&request.request_id)?;
     let installed_model_revision = engine_model_revision(&request.engine_id)?;
     if request.model_revision != installed_model_revision {
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "[sonelle][native][manifest:revision] engine={} requested={} installed={} error=model-revision-mismatch",
+            request.engine_id, request.model_revision, installed_model_revision
+        );
         return Err("Narration files changed. Please try again.".to_string());
     }
     log_manifest_request("prepare", &request);

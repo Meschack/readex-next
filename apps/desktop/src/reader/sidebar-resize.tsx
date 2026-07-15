@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js";
+import { DEFAULT_READER_PREFERENCES } from "@sonelle/reader";
 
 export type ResizableSidebar = "library" | "inspector";
 type SidebarEdge = "left" | "right";
@@ -24,8 +25,8 @@ interface SidebarResizeBoundsInput {
 }
 
 export const sidebarDefaultWidths: Record<ResizableSidebar, number> = {
-  library: 270,
-  inspector: 310
+  library: DEFAULT_READER_PREFERENCES.libraryRailWidth,
+  inspector: DEFAULT_READER_PREFERENCES.inspectorRailWidth
 };
 
 const sidebarWidthLimits: Record<ResizableSidebar, SidebarWidthBounds> = {

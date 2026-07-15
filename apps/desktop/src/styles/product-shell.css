@@ -1,7 +1,7 @@
 /* Film-aligned product shell */
 .sonelle-shell {
-  --inspector-rail-width: 350px;
-  --library-rail-width: 300px;
+  --inspector-rail-width: 400px;
+  --library-rail-width: 340px;
   --reader-topbar-height: 76px;
   grid-template-columns: var(--library-rail-width) minmax(560px, 1fr) var(--inspector-rail-width);
   grid-template-rows: 54px minmax(0, 1fr) 96px;
