@@ -57,7 +57,11 @@ export interface ReaderPlaybackApplication {
   toggle(): void;
   move(direction: -1 | 1): void;
   select(sentenceIndex: number): void;
-  activate(reader: ReaderView, sentenceIndex?: number, playbackStatus?: PlaybackStatus): void;
+  activate(
+    reader: ReaderView,
+    sentenceIndex?: number,
+    playbackStatus?: PlaybackStatus
+  ): Promise<void>;
   projectNarration(event: NarrationPlaybackProjectionEvent): void;
   stop(): Promise<void>;
   jumpStatus(): PlaybackStatus;
@@ -234,7 +238,11 @@ export function createReaderPlaybackApplication(
         selectPlaybackSentence(current, options.currentReader().sentences.length, sentenceIndex)
       );
     },
-    activate(nextReader, sentenceIndex = nextReader.initialSentenceIndex, playbackStatus = "idle") {
+    async activate(
+      nextReader,
+      sentenceIndex = nextReader.initialSentenceIndex,
+      playbackStatus = "idle"
+    ) {
       const previousReader = options.currentReader();
       const switchingBooks =
         nextReader.book.id !== previousReader.book.id ||
@@ -243,6 +251,7 @@ export function createReaderPlaybackApplication(
       positionScheduler.flush();
       nextPositionSaveIntent = "immediate";
       options.clearSentenceElements();
+      await dependencies.narration.reset().catch(dependencies.reportEventError);
       options.projectReaderActivation(
         nextReader,
         selectPlaybackSentence(
@@ -251,7 +260,6 @@ export function createReaderPlaybackApplication(
           sentenceIndex
         )
       );
-      void dependencies.narration.reset();
     },
     projectNarration(event) {
       const reader = options.currentReader();

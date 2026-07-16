@@ -3,7 +3,10 @@ import { DEFAULT_AUDIO_SETTINGS } from "@sonelle/audio";
 import { createDomainEvent, createDomainEventDispatcher } from "@sonelle/domain";
 import { createPlaybackState, type ReaderPlaybackState } from "@sonelle/reader";
 import type { ReaderNarrationWorkflow } from "./reader-narration-workflow";
-import { createReaderPlaybackApplication } from "./reader-playback-application";
+import {
+  createReaderPlaybackApplication,
+  type ReaderPlaybackApplication
+} from "./reader-playback-application";
 import { buildFixtureReaderView, type ReaderView } from "./reader-view";
 
 afterEach(() => vi.useRealTimers());
@@ -54,6 +57,27 @@ describe("reader playback application", () => {
     harness.application.dispose();
   });
 
+  it("resets old narration before continuing an automatic chapter handoff", async () => {
+    vi.useFakeTimers();
+    const harness = createHarness({ reactToReaderActivation: true });
+    const nextReader: ReaderView = {
+      ...buildFixtureReaderView({ chapterId: "chapter-2" }),
+      source: "library"
+    };
+    harness.advanceChapter.mockImplementation(async () => {
+      await harness.application.activate(nextReader, 0, "playing");
+    });
+    harness.setPlayback({ activeSentenceIndex: 0, status: "ended" });
+
+    harness.application.autoAdvanceChanged();
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(harness.advanceChapter).toHaveBeenCalledOnce();
+    expect(harness.requestPlayback).toHaveBeenCalledWith(nextReader.sentences[0].id);
+    expect(harness.operations).toEqual(["reset", `play:${nextReader.sentences[0].id}`]);
+    harness.application.dispose();
+  });
+
   it("reacts to a user voice change without duplicating book-activation resets", async () => {
     const harness = createHarness();
     const stop = harness.application.start();
@@ -82,24 +106,26 @@ describe("reader playback application", () => {
   });
 });
 
-function createHarness() {
+function createHarness(options: { reactToReaderActivation?: boolean } = {}) {
   let currentReader: ReaderView = { ...buildFixtureReaderView(), source: "library" };
   let currentPlayback = createPlaybackState();
   let currentSettings = DEFAULT_AUDIO_SETTINGS;
   let currentAudible = false;
+  const operations: string[] = [];
   const savePosition = vi.fn().mockResolvedValue(undefined);
-  const reset = vi.fn().mockResolvedValue(undefined);
+  const reset = vi.fn(async () => void operations.push("reset"));
   const advanceChapter = vi.fn().mockResolvedValue(undefined);
   const dispatcher = createDomainEventDispatcher();
   const narration = {
-    requestPlayback: vi.fn(),
+    requestPlayback: vi.fn((sentenceId: string) => void operations.push(`play:${sentenceId}`)),
     pause: vi.fn().mockResolvedValue(undefined),
     setOutput: vi.fn(),
     prefetchUpcoming: vi.fn(),
     reset,
     start: vi.fn(() => () => undefined)
   } satisfies ReaderNarrationWorkflow;
-  const application = createReaderPlaybackApplication(
+  let application!: ReaderPlaybackApplication;
+  application = createReaderPlaybackApplication(
     {
       narration,
       settings: { activate: vi.fn() },
@@ -129,6 +155,7 @@ function createHarness() {
       projectReaderActivation: (reader, playback) => {
         currentReader = reader;
         currentPlayback = playback;
+        if (options.reactToReaderActivation) application.playbackChanged();
       },
       clearSentenceElements: vi.fn(),
       advanceChapter,
@@ -146,6 +173,8 @@ function createHarness() {
     },
     savePosition,
     reset,
+    requestPlayback: narration.requestPlayback,
+    operations,
     advanceChapter,
     dispatcher
   };

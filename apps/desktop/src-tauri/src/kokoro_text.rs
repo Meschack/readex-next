@@ -1,12 +1,14 @@
 use std::{
     collections::HashMap,
+    panic::{catch_unwind, AssertUnwindSafe},
     sync::{Mutex, OnceLock},
 };
 
-use grapheme_to_phoneme::{Model as OovModel, PhonemeToken};
+use grapheme_to_phoneme::{GraphToPhoneError, Model as OovModel, PhonemeToken};
 use misaki_rs::{Language, G2P};
+use unicode_normalization::{char::is_combining_mark, UnicodeNormalization};
 
-use crate::kokoro_narration::KokoroSentencePhonemes;
+use crate::{error_log::record_native_error, kokoro_narration::KokoroSentencePhonemes};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KokoroEnglishDialect {
@@ -81,12 +83,13 @@ fn improve_token_pronunciation(g2p: &G2P, token: &mut misaki_rs::MToken) -> Resu
         let lowercase_phonemes = lowercase_phonemes(g2p, word)
             .ok_or_else(|| "English narration input is invalid.".to_string())?;
         token.phonemes = Some(if is_character_spelling(&lowercase_phonemes) {
-            predict_oov_phonemes(word)?
+            predicted_or_fallback(word, lowercase_phonemes)
         } else {
             lowercase_phonemes
         });
     } else if should_predict_pronunciation(token) {
-        token.phonemes = Some(predict_oov_phonemes(&token.text)?);
+        let fallback = token.phonemes.clone().unwrap_or_default();
+        token.phonemes = Some(predicted_or_fallback(word, fallback));
     }
     Ok(())
 }
@@ -121,8 +124,10 @@ fn is_character_spelling(phonemes: &str) -> bool {
     phonemes.contains("  ")
 }
 
-fn predict_oov_phonemes(word: &str) -> Result<String, String> {
-    let normalized_word = word.to_lowercase();
+fn predict_oov_phonemes(word: &str) -> Result<Option<String>, String> {
+    let Some(normalized_word) = normalize_oov_model_word(word) else {
+        return Ok(None);
+    };
     let pronunciations = OOV_PRONUNCIATIONS.get_or_init(|| Mutex::new(HashMap::new()));
     if let Some(phonemes) = pronunciations
         .lock()
@@ -130,7 +135,7 @@ fn predict_oov_phonemes(word: &str) -> Result<String, String> {
         .get(&normalized_word)
         .cloned()
     {
-        return Ok(phonemes);
+        return Ok(Some(phonemes));
     }
 
     let model = OOV_MODEL.get_or_init(|| {
@@ -138,9 +143,7 @@ fn predict_oov_phonemes(word: &str) -> Result<String, String> {
             .map_err(|_| "Sonelle couldn't load English pronunciation rules.".to_string())
     });
     let model = model.as_ref().map_err(Clone::clone)?;
-    let predicted = model
-        .predict_phonemes(&normalized_word)
-        .map_err(|_| "Sonelle couldn't pronounce an English word.".to_string())?;
+    let predicted = protected_oov_prediction(|| model.predict_phonemes(&normalized_word))?;
     let phonemes = predicted
         .iter()
         .filter_map(|token| match token {
@@ -156,7 +159,50 @@ fn predict_oov_phonemes(word: &str) -> Result<String, String> {
         .lock()
         .map_err(|_| "Sonelle couldn't open English pronunciation rules.".to_string())?
         .insert(normalized_word, phonemes.clone());
-    Ok(phonemes)
+    Ok(Some(phonemes))
+}
+
+fn predicted_or_fallback(word: &str, fallback: String) -> String {
+    predicted_or_fallback_with(word, fallback, predict_oov_phonemes, |error| {
+        record_native_error("kokoro.pronunciation.fallback", error);
+    })
+}
+
+fn predicted_or_fallback_with(
+    word: &str,
+    fallback: String,
+    predict: impl FnOnce(&str) -> Result<Option<String>, String>,
+    report: impl FnOnce(&str),
+) -> String {
+    match predict(word) {
+        Ok(Some(phonemes)) => phonemes,
+        Ok(None) => fallback,
+        Err(error) => {
+            report(&error);
+            fallback
+        }
+    }
+}
+
+fn protected_oov_prediction(
+    prediction: impl FnOnce() -> Result<Vec<PhonemeToken>, GraphToPhoneError>,
+) -> Result<Vec<PhonemeToken>, String> {
+    catch_unwind(AssertUnwindSafe(prediction))
+        .map_err(|_| "English pronunciation rules stopped unexpectedly.".to_string())?
+        .map_err(|_| "Sonelle couldn't pronounce an English word.".to_string())
+}
+
+fn normalize_oov_model_word(word: &str) -> Option<String> {
+    let normalized = word
+        .nfd()
+        .filter(|character| !is_combining_mark(*character))
+        .collect::<String>()
+        .to_ascii_lowercase();
+    (!normalized.is_empty()
+        && normalized
+            .chars()
+            .all(|character| character.is_ascii_lowercase()))
+    .then_some(normalized)
 }
 
 fn arpabet_to_kokoro(phoneme: &str) -> String {
@@ -236,9 +282,15 @@ fn join_intra_word_hyphens(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    use grapheme_to_phoneme::{GraphToPhoneError, PhonemeToken};
     use misaki_rs::{Language, G2P};
 
-    use super::{phonemize_kokoro_english_sentences, KokoroEnglishDialect, KokoroTextSentence};
+    use super::{
+        phonemize_kokoro_english_sentences, predicted_or_fallback_with, protected_oov_prediction,
+        KokoroEnglishDialect, KokoroTextSentence,
+    };
 
     #[test]
     fn phonemizes_english_sentences_for_kokoro() {
@@ -327,6 +379,76 @@ mod tests {
     }
 
     #[test]
+    fn phonemizes_accented_names_without_panicking() {
+        let phonemes = phonemes_for("Simón");
+
+        assert!(!phonemes.is_empty());
+        assert!(!phonemes.contains(' '));
+    }
+
+    #[test]
+    fn phonemizes_name_heavy_book_text_without_panicking() {
+        let phonemes = phonemize_kokoro_english_sentences(
+            &[
+                sentence(
+                    "sentence-1",
+                    "This was clearly the attitude of Simón Bolívar.",
+                ),
+                sentence(
+                    "sentence-2",
+                    "Carsun Chang and Chang Chun-Mai discussed the Kuomintang.",
+                ),
+            ],
+            KokoroEnglishDialect::American,
+        )
+        .expect("book text with names should phonemize");
+
+        assert_eq!(phonemes.len(), 2);
+        assert!(phonemes
+            .iter()
+            .all(|sentence| !sentence.phonemes.is_empty()));
+    }
+
+    #[test]
+    fn contains_third_party_pronunciation_panics() {
+        let error = protected_oov_prediction(|| -> Result<Vec<PhonemeToken>, GraphToPhoneError> {
+            panic!("simulated predictor panic")
+        })
+        .expect_err("predictor panic should become a recoverable error");
+
+        assert_eq!(error, "English pronunciation rules stopped unexpectedly.");
+    }
+
+    #[test]
+    fn keeps_existing_pronunciation_when_prediction_fails() {
+        let mut reported = None;
+        let phonemes = predicted_or_fallback_with(
+            "example",
+            "fallback pronunciation".to_string(),
+            |_| Err("simulated prediction failure".to_string()),
+            |error| reported = Some(error.to_string()),
+        );
+
+        assert_eq!(phonemes, "fallback pronunciation");
+        assert_eq!(reported.as_deref(), Some("simulated prediction failure"));
+    }
+
+    #[test]
+    fn contains_japanese_names_inside_english_text() {
+        assert_non_latin_name_is_contained("The author is 村上春樹.");
+    }
+
+    #[test]
+    fn contains_chinese_names_inside_english_text() {
+        assert_non_latin_name_is_contained("The philosopher is 孔子.");
+    }
+
+    #[test]
+    fn contains_cyrillic_names_inside_english_text() {
+        assert_non_latin_name_is_contained("The character is Татьяна.");
+    }
+
+    #[test]
     fn preserves_short_initialisms() {
         let phonemes = phonemes_for("FBI");
         let raw = G2P::new(Language::EnglishUS)
@@ -347,6 +469,29 @@ mod tests {
         .expect("fixture should phonemize")[0]
             .phonemes
             .clone()
+    }
+
+    fn assert_non_latin_name_is_contained(text: &str) {
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            phonemize_kokoro_english_sentences(
+                &[sentence("sentence-1", text)],
+                KokoroEnglishDialect::American,
+            )
+        }));
+        let result = outcome.expect("non-Latin names must not unwind narration preparation");
+
+        match result {
+            Ok(sentences) => {
+                assert_eq!(sentences.len(), 1);
+                assert!(!sentences[0].phonemes.is_empty());
+                assert!(!sentences[0].phonemes.contains('❓'));
+            }
+            Err(error) => {
+                assert!(!error.is_empty());
+                assert!(!error.contains("collapse_axis"));
+                assert!(!error.contains("array with shape"));
+            }
+        }
     }
 
     fn sentence(sentence_id: &str, text: &str) -> KokoroTextSentence {

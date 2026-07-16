@@ -62,7 +62,7 @@ export function createReaderOpeningWorkflow(
         dependencies.eventDispatcher.subscribe("ReaderOpened", (event) => {
           const opening = pending.get(event.id);
           if (opening != null) {
-            dependencies.playback.activate(
+            return dependencies.playback.activate(
               opening.reader,
               opening.sentenceIndex,
               opening.playbackStatus

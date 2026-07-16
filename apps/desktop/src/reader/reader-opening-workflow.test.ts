@@ -7,7 +7,13 @@ describe("reader opening workflow", () => {
   it("publishes one fact and lets opening consequences react independently", async () => {
     const dispatcher = createDomainEventDispatcher();
     const events: AnyDomainEvent[] = [];
-    const activate = vi.fn();
+    let finishActivation = () => {};
+    const activate = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishActivation = resolve;
+        })
+    );
     const projectReaderSurface = vi.fn();
     const projectLibraryRail = vi.fn();
     const projectLibraryNotice = vi.fn();
@@ -23,7 +29,11 @@ describe("reader opening workflow", () => {
     const stop = workflow.start();
     const reader = buildFixtureReaderView();
 
-    await workflow.open(reader, 1, "playing");
+    const opening = workflow.open(reader, 1, "playing");
+    await vi.waitFor(() => expect(activate).toHaveBeenCalledWith(reader, 1, "playing"));
+    expect(projectReaderSurface).not.toHaveBeenCalled();
+    finishActivation();
+    await opening;
 
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
@@ -35,7 +45,6 @@ describe("reader opening workflow", () => {
         playbackStatus: "playing"
       }
     });
-    expect(activate).toHaveBeenCalledWith(reader, 1, "playing");
     expect(projectReaderSurface).toHaveBeenCalledOnce();
     expect(projectLibraryRail).toHaveBeenCalledWith(reader.book.id);
     expect(projectLibraryNotice).toHaveBeenCalledWith(null);
