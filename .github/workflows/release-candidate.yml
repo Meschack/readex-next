@@ -1,16 +1,10 @@
 name: Release Candidate
 
 on:
-  workflow_run:
-    workflows:
-      - CI
-    branches:
-      - dev
-    types:
-      - completed
+  workflow_call:
 
 concurrency:
-  group: release-candidate-${{ github.event.workflow_run.head_sha }}
+  group: release-candidate-${{ github.sha }}
   cancel-in-progress: true
 
 permissions:
@@ -20,13 +14,12 @@ jobs:
   provider-smoke:
     name: Verify real narration providers
     runs-on: ubuntu-24.04
-    if: github.event.workflow_run.conclusion == 'success'
 
     steps:
       - name: Checkout verified revision
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.sha }}
 
       - name: Install Linux dependencies
         run: |
@@ -81,7 +74,7 @@ jobs:
     name: Build ${{ matrix.label }} candidate
     runs-on: ${{ matrix.platform }}
     needs: provider-smoke
-    if: github.event.workflow_run.conclusion == 'success' && needs.provider-smoke.result == 'success'
+    if: needs.provider-smoke.result == 'success'
 
     strategy:
       fail-fast: false
@@ -101,7 +94,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.sha }}
 
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-24.04'
@@ -151,6 +144,6 @@ jobs:
       - name: Upload candidate bundles
         uses: actions/upload-artifact@v7
         with:
-          name: sonelle-candidate-${{ matrix.label }}-${{ github.event.workflow_run.head_sha }}
+          name: sonelle-candidate-${{ matrix.label }}-${{ github.sha }}
           if-no-files-found: error
           path: target/**/release/bundle/**/*

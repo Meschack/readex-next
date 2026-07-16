@@ -140,3 +140,11 @@ jobs:
             target/release/bundle/**/*.AppImage
             target/release/bundle/**/*.deb
             target/release/bundle/**/*.rpm
+
+  release-candidate:
+    name: Release candidate
+    needs: bundle-linux
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-candidate.yml

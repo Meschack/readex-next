@@ -162,7 +162,8 @@ remains available with `pnpm setup:piper` when explicitly testing the compatibil
 GitHub Actions runs two workflows:
 
 - `CI`: verifies formatting, TypeScript, tests, frontend build, strict native linting/tests, and a Linux desktop bundle.
-- `Release Candidate`: runs after successful `dev` CI, executes real-provider smoke tests, and then builds platform candidates from that exact verified revision.
+- `Release Candidate`: is called by `dev` CI after standard verification and the Linux bundle succeed,
+  then executes real-provider smoke tests and builds platform candidates from that same commit.
 - `Release`: runs only after successful `main` CI and publishes GitHub Releases for Linux, macOS Apple Silicon, and Windows.
 
 The release workflow uses `scripts/prepare-release-version.mjs` to compute the next patch version from existing `v*` tags. The computed version is applied to the package, Tauri, and Cargo manifests inside the workflow workspace before `tauri-apps/tauri-action` builds release bundles.
