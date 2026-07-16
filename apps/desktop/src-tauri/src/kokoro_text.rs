@@ -5,6 +5,7 @@ use std::{
 
 use grapheme_to_phoneme::{Model as OovModel, PhonemeToken};
 use misaki_rs::{Language, G2P};
+use unicode_normalization::{char::is_combining_mark, UnicodeNormalization};
 
 use crate::kokoro_narration::KokoroSentencePhonemes;
 
@@ -81,12 +82,14 @@ fn improve_token_pronunciation(g2p: &G2P, token: &mut misaki_rs::MToken) -> Resu
         let lowercase_phonemes = lowercase_phonemes(g2p, word)
             .ok_or_else(|| "English narration input is invalid.".to_string())?;
         token.phonemes = Some(if is_character_spelling(&lowercase_phonemes) {
-            predict_oov_phonemes(word)?
+            predict_oov_phonemes(word)?.unwrap_or(lowercase_phonemes)
         } else {
             lowercase_phonemes
         });
     } else if should_predict_pronunciation(token) {
-        token.phonemes = Some(predict_oov_phonemes(&token.text)?);
+        if let Some(phonemes) = predict_oov_phonemes(word)? {
+            token.phonemes = Some(phonemes);
+        }
     }
     Ok(())
 }
@@ -121,8 +124,10 @@ fn is_character_spelling(phonemes: &str) -> bool {
     phonemes.contains("  ")
 }
 
-fn predict_oov_phonemes(word: &str) -> Result<String, String> {
-    let normalized_word = word.to_lowercase();
+fn predict_oov_phonemes(word: &str) -> Result<Option<String>, String> {
+    let Some(normalized_word) = normalize_oov_model_word(word) else {
+        return Ok(None);
+    };
     let pronunciations = OOV_PRONUNCIATIONS.get_or_init(|| Mutex::new(HashMap::new()));
     if let Some(phonemes) = pronunciations
         .lock()
@@ -130,7 +135,7 @@ fn predict_oov_phonemes(word: &str) -> Result<String, String> {
         .get(&normalized_word)
         .cloned()
     {
-        return Ok(phonemes);
+        return Ok(Some(phonemes));
     }
 
     let model = OOV_MODEL.get_or_init(|| {
@@ -156,7 +161,20 @@ fn predict_oov_phonemes(word: &str) -> Result<String, String> {
         .lock()
         .map_err(|_| "Sonelle couldn't open English pronunciation rules.".to_string())?
         .insert(normalized_word, phonemes.clone());
-    Ok(phonemes)
+    Ok(Some(phonemes))
+}
+
+fn normalize_oov_model_word(word: &str) -> Option<String> {
+    let normalized = word
+        .nfd()
+        .filter(|character| !is_combining_mark(*character))
+        .collect::<String>()
+        .to_ascii_lowercase();
+    (!normalized.is_empty()
+        && normalized
+            .chars()
+            .all(|character| character.is_ascii_lowercase()))
+    .then_some(normalized)
 }
 
 fn arpabet_to_kokoro(phoneme: &str) -> String {
@@ -324,6 +342,37 @@ mod tests {
             "unknown names must receive a word pronunciation: {phonemes}"
         );
         assert_eq!(phonemes, phonemes_for("KACZYNSKI"));
+    }
+
+    #[test]
+    fn phonemizes_accented_names_without_panicking() {
+        let phonemes = phonemes_for("Simón");
+
+        assert!(!phonemes.is_empty());
+        assert!(!phonemes.contains(' '));
+    }
+
+    #[test]
+    fn phonemizes_name_heavy_book_text_without_panicking() {
+        let phonemes = phonemize_kokoro_english_sentences(
+            &[
+                sentence(
+                    "sentence-1",
+                    "This was clearly the attitude of Simón Bolívar.",
+                ),
+                sentence(
+                    "sentence-2",
+                    "Carsun Chang and Chang Chun-Mai discussed the Kuomintang.",
+                ),
+            ],
+            KokoroEnglishDialect::American,
+        )
+        .expect("book text with names should phonemize");
+
+        assert_eq!(phonemes.len(), 2);
+        assert!(phonemes
+            .iter()
+            .all(|sentence| !sentence.phonemes.is_empty()));
     }
 
     #[test]
