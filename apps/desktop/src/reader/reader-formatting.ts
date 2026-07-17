@@ -27,7 +27,7 @@ export function bookInitials(title: string): string {
 export function libraryProgressPercent(book: LibraryBookSummary): number {
   if (book.sentenceCount <= 0) return 0;
 
-  const completedSentences = Math.max(0, Math.min(book.sentenceCount, book.lastSentenceIndex + 1));
+  const completedSentences = Math.max(0, Math.min(book.sentenceCount, book.completedSentenceCount));
   return Math.round((completedSentences / book.sentenceCount) * 100);
 }
 

@@ -2,7 +2,6 @@ use std::{collections::HashMap, fs, path::PathBuf};
 
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
-use serde_json::json;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 
@@ -11,35 +10,14 @@ use crate::{
     library_import::{PreparedBookImport, PreparedParagraphImport},
 };
 
-mod event_journal;
 mod model;
 
-use event_journal::{insert_event, insert_renderer_event};
 pub use model::*;
 
 #[derive(Clone)]
 pub struct SonelleStore {
     db_path: PathBuf,
     covers_dir: PathBuf,
-}
-
-pub(crate) enum LegacyLibraryRepairEvent<'a> {
-    Started {
-        batch_size: usize,
-    },
-    Progressed {
-        examined_count: usize,
-        repaired_count: usize,
-        failed_count: usize,
-    },
-    Completed {
-        examined_count: usize,
-        repaired_count: usize,
-        failed_count: usize,
-    },
-    Failed {
-        reason: &'a str,
-    },
 }
 
 struct StagedCover {
@@ -98,17 +76,6 @@ impl SonelleStore {
         Ok(store)
     }
 
-    pub fn record_domain_event(&self, event: RecordDomainEventRequest) -> Result<(), String> {
-        let connection = self.connect()?;
-        insert_renderer_event(
-            &connection,
-            &event.id,
-            &event.name,
-            &event.occurred_at,
-            &event.payload,
-        )
-    }
-
     #[cfg(test)]
     pub(crate) fn open_at(db_path: PathBuf) -> Result<Self, String> {
         let covers_dir = db_path
@@ -138,7 +105,6 @@ impl SonelleStore {
             )
             .optional()
             .map_err(|_| "We couldn't inspect the local library.".to_string())?;
-        let replaced_existing = previous_cover_path.is_some();
         let mut staged_cover = self.stage_cover(&book.id, book.cover_image.as_ref())?;
         let cover_image_src = staged_cover.as_ref().map(StagedCover::source_path);
         let transaction = connection
@@ -272,36 +238,6 @@ impl SonelleStore {
             )
             .map_err(|_| "We couldn't save your reading place.".to_string())?;
 
-        insert_event(
-            &transaction,
-            "BookTextExtracted",
-            json!({
-                "bookId": book.id,
-                "chapterCount": book.chapters.len()
-            }),
-        )?;
-        for chapter in &book.chapters {
-            insert_event(
-                &transaction,
-                "ChapterSegmented",
-                json!({
-                    "bookId": book.id,
-                    "chapterId": chapter.id,
-                    "sentenceCount": chapter.sentences.len()
-                }),
-            )?;
-        }
-        insert_event(
-            &transaction,
-            "BookImported",
-            json!({
-                "bookId": book.id,
-                "title": book.title,
-                "chapterCount": book.chapters.len(),
-                "replacedExisting": replaced_existing
-            }),
-        )?;
-
         if let Some(cover) = &mut staged_cover {
             cover.promote()?;
         }
@@ -332,9 +268,25 @@ impl SonelleStore {
                     books.chapter_count,
                     books.sentence_count,
                     reading_positions.chapter_id,
-                    COALESCE(reading_positions.sentence_index, 0)
+                    CASE
+                      WHEN reading_positions.chapter_id IS NULL THEN 0
+                      ELSE MIN(
+                        books.sentence_count,
+                        COALESCE((
+                          SELECT SUM(previous_chapter.sentence_count)
+                          FROM chapters AS previous_chapter
+                          WHERE previous_chapter.book_id = books.id
+                            AND previous_chapter.position < active_chapter.position
+                        ), 0) + MIN(
+                          active_chapter.sentence_count,
+                          MAX(0, reading_positions.sentence_index + 1)
+                        )
+                      )
+                    END
                  FROM books
                  LEFT JOIN reading_positions ON reading_positions.book_id = books.id
+                 LEFT JOIN chapters AS active_chapter
+                   ON active_chapter.id = reading_positions.chapter_id
                  ORDER BY books.imported_at DESC",
             )
             .map_err(|_| "We couldn't read your library.".to_string())?;
@@ -349,7 +301,7 @@ impl SonelleStore {
                     chapter_count: row.get(5)?,
                     sentence_count: row.get(6)?,
                     last_chapter_id: row.get(7)?,
-                    last_sentence_index: row.get(8)?,
+                    completed_sentence_count: row.get(8)?,
                 })
             })
             .map_err(|_| "We couldn't read your library.".to_string())?
@@ -436,16 +388,6 @@ impl SonelleStore {
             )
             .map_err(|_| "We couldn't save your reading place.".to_string())?;
 
-        insert_event(
-            &transaction,
-            "PlaybackPositionChanged",
-            json!({
-                "bookId": position.book_id,
-                "chapterId": position.chapter_id,
-                "sentenceIndex": position.sentence_index
-            }),
-        )?;
-
         transaction
             .commit()
             .map_err(|_| "We couldn't finish saving your reading place.".to_string())
@@ -491,11 +433,6 @@ impl SonelleStore {
                 params![language, book_id],
             )
             .map_err(|_| "We couldn't update that book.".to_string())?;
-        insert_event(
-            &transaction,
-            "BookLanguageRecovered",
-            json!({ "bookId": book_id, "language": language }),
-        )?;
         transaction
             .commit()
             .map_err(|_| "We couldn't finish updating that book.".to_string())
@@ -535,47 +472,6 @@ impl SonelleStore {
         Ok(chapters)
     }
 
-    pub(crate) fn record_legacy_library_repair_event(
-        &self,
-        event: LegacyLibraryRepairEvent<'_>,
-    ) -> Result<(), String> {
-        let connection = self.connect()?;
-        let (name, payload) = match event {
-            LegacyLibraryRepairEvent::Started { batch_size } => (
-                "LegacyLibraryRepairStarted",
-                json!({ "batchSize": batch_size }),
-            ),
-            LegacyLibraryRepairEvent::Progressed {
-                examined_count,
-                repaired_count,
-                failed_count,
-            } => (
-                "LegacyLibraryRepairProgressed",
-                json!({
-                    "examinedCount": examined_count,
-                    "repairedCount": repaired_count,
-                    "failedCount": failed_count
-                }),
-            ),
-            LegacyLibraryRepairEvent::Completed {
-                examined_count,
-                repaired_count,
-                failed_count,
-            } => (
-                "LegacyLibraryRepairCompleted",
-                json!({
-                    "examinedCount": examined_count,
-                    "repairedCount": repaired_count,
-                    "failedCount": failed_count
-                }),
-            ),
-            LegacyLibraryRepairEvent::Failed { reason } => {
-                ("LegacyLibraryRepairFailed", json!({ "reason": reason }))
-            }
-        };
-        insert_event(&connection, name, payload)
-    }
-
     pub fn save_recovered_paragraphs(
         &self,
         book_id: &str,
@@ -607,15 +503,6 @@ impl SonelleStore {
                     .map_err(|_| "We couldn't update that chapter.".to_string())?;
             }
         }
-        insert_event(
-            &transaction,
-            "ChapterParagraphsRecovered",
-            json!({
-                "bookId": book_id,
-                "chapterId": chapter_id,
-                "paragraphCount": paragraphs.len()
-            }),
-        )?;
         transaction
             .commit()
             .map_err(|_| "We couldn't finish updating that chapter.".to_string())
@@ -734,18 +621,6 @@ impl SonelleStore {
             )
             .map_err(|_| "We couldn't save that bookmark.".to_string())?;
 
-        insert_event(
-            &transaction,
-            "BookmarkCreated",
-            json!({
-                "bookmarkId": id,
-                "bookId": bookmark.book_id,
-                "chapterId": bookmark.chapter_id,
-                "sentenceId": bookmark.sentence_id,
-                "sentenceIndex": bookmark.sentence_index
-            }),
-        )?;
-
         let saved = self.read_bookmark_by_id(&transaction, &id)?;
         transaction
             .commit()
@@ -758,28 +633,9 @@ impl SonelleStore {
         let transaction = connection
             .transaction()
             .map_err(|_| "We couldn't prepare that bookmark update.".to_string())?;
-        let book_id = transaction
-            .query_row(
-                "SELECT book_id FROM bookmarks WHERE id = ?1",
-                params![bookmark_id],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(|_| "We couldn't find that bookmark.".to_string())?;
-        let deleted = transaction
+        transaction
             .execute("DELETE FROM bookmarks WHERE id = ?1", params![bookmark_id])
             .map_err(|_| "We couldn't remove that bookmark.".to_string())?;
-
-        if let (true, Some(book_id)) = (deleted > 0, book_id) {
-            insert_event(
-                &transaction,
-                "BookmarkDeleted",
-                json!({
-                    "bookmarkId": bookmark_id,
-                    "bookId": book_id
-                }),
-            )?;
-        }
 
         transaction
             .commit()
@@ -815,28 +671,9 @@ impl SonelleStore {
     }
 
     pub fn export_book_data(&self, book_id: &str) -> Result<BookExportView, String> {
-        let connection = self.connect()?;
-        insert_event(
-            &connection,
-            "BookExportRequested",
-            json!({
-                "bookId": book_id
-            }),
-        )?;
-
         let document = self.open_book_for_export(book_id)?;
         let bookmarks = self.list_bookmarks(Some(book_id))?;
         let exported_at = now();
-        insert_event(
-            &connection,
-            "BookExported",
-            json!({
-                "bookId": book_id,
-                "bookmarkCount": bookmarks.len(),
-                "exportedAt": exported_at,
-                "fileName": null
-            }),
-        )?;
 
         Ok(BookExportView {
             exported_at,
@@ -862,6 +699,8 @@ impl SonelleStore {
             .execute_batch(
                 "
                 PRAGMA foreign_keys = ON;
+
+                DROP TABLE IF EXISTS domain_events;
 
                 CREATE TABLE IF NOT EXISTS books (
                     id TEXT PRIMARY KEY,
@@ -918,13 +757,6 @@ impl SonelleStore {
                     note TEXT,
                     created_at TEXT NOT NULL,
                     UNIQUE(book_id, chapter_id, sentence_id)
-                );
-
-                CREATE TABLE IF NOT EXISTS domain_events (
-                    id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    occurred_at TEXT NOT NULL,
-                    payload_json TEXT NOT NULL
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_chapters_book_position
@@ -1600,6 +1432,58 @@ mod tests {
     }
 
     #[test]
+    fn lists_cumulative_reading_progress_across_chapters() {
+        let temp_dir = temp_store_dir();
+        fs::create_dir_all(&temp_dir).expect("test store dir should be created");
+        let store = SonelleStore::open_at(temp_dir.join("sonelle.sqlite3"))
+            .expect("store should initialize");
+        store
+            .save_imported_book(ImportedBook {
+                id: "progress-book".to_string(),
+                title: "Progress Book".to_string(),
+                author: "Test Author".to_string(),
+                language: Some("en".to_string()),
+                cover_image: None,
+                source_path: "/tmp/progress.epub".to_string(),
+                chapters: vec![
+                    ImportedChapter {
+                        id: "progress-book:chapter-1".to_string(),
+                        title: "Chapter One".to_string(),
+                        index: 0,
+                        body: "First sentence. Second sentence.".to_string(),
+                    },
+                    ImportedChapter {
+                        id: "progress-book:chapter-2".to_string(),
+                        title: "Chapter Two".to_string(),
+                        index: 1,
+                        body: "Third sentence. Fourth sentence. Fifth sentence.".to_string(),
+                    },
+                    ImportedChapter {
+                        id: "progress-book:chapter-3".to_string(),
+                        title: "Chapter Three".to_string(),
+                        index: 2,
+                        body: "Sixth sentence. Seventh sentence.".to_string(),
+                    },
+                ],
+            })
+            .expect("book should save");
+
+        store
+            .save_reading_position(SaveReadingPositionRequest {
+                book_id: "progress-book".to_string(),
+                chapter_id: "progress-book:chapter-2".to_string(),
+                sentence_index: 1,
+            })
+            .expect("position should save");
+
+        let books = store.list_books().expect("books should list");
+        assert_eq!(books[0].sentence_count, 7);
+        assert_eq!(books[0].completed_sentence_count, 4);
+
+        fs::remove_dir_all(temp_dir).ok();
+    }
+
+    #[test]
     fn migrates_existing_books_table_and_persists_cover_image() {
         let temp_dir = temp_store_dir();
         fs::create_dir_all(&temp_dir).expect("test store dir should be created");
@@ -1656,6 +1540,41 @@ mod tests {
         assert_eq!(books[0].cover_image_src.as_deref(), Some(cover_path));
         assert_eq!(reopened.book.cover_image_src.as_deref(), Some(cover_path));
 
+        fs::remove_dir_all(temp_dir).ok();
+    }
+
+    #[test]
+    fn removes_legacy_domain_event_history_during_initialization() {
+        let temp_dir = temp_store_dir();
+        fs::create_dir_all(&temp_dir).expect("test store dir should be created");
+        let db_path = temp_dir.join("sonelle.sqlite3");
+        Connection::open(&db_path)
+            .expect("legacy database should open")
+            .execute_batch(
+                "CREATE TABLE domain_events (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL,
+                    payload_json TEXT NOT NULL
+                 );
+                 INSERT INTO domain_events VALUES (
+                    'event-1', 'ReaderOpened', '2026-07-16T00:00:00Z', '{}'
+                 );",
+            )
+            .expect("legacy event history should exist");
+
+        let store = SonelleStore::open_at(db_path).expect("store should initialize");
+        let connection = store.connect().expect("store should connect");
+        let event_table_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'domain_events'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("schema should be readable");
+
+        assert_eq!(event_table_count, 0);
         fs::remove_dir_all(temp_dir).ok();
     }
 
@@ -1881,25 +1800,6 @@ mod tests {
             .list_bookmarks(Some("book-search"))
             .expect("bookmarks should list")
             .is_empty());
-        let connection = store.connect().expect("store should connect");
-        let deleted_payload = connection
-            .query_row(
-                "SELECT payload_json FROM domain_events
-                 WHERE name = 'BookmarkDeleted'
-                 ORDER BY occurred_at DESC
-                 LIMIT 1",
-                [],
-                |row| row.get::<_, String>(0),
-            )
-            .expect("bookmark deletion event should exist");
-        let deleted_payload: serde_json::Value =
-            serde_json::from_str(&deleted_payload).expect("event payload should be valid JSON");
-        assert_eq!(
-            deleted_payload["bookmarkId"].as_str(),
-            Some(bookmark.id.as_str())
-        );
-        assert_eq!(deleted_payload["bookId"].as_str(), Some("book-search"));
-
         fs::remove_dir_all(temp_dir).ok();
     }
 

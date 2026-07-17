@@ -44,8 +44,8 @@ The paragraph projection is intentionally not a domain source of truth. It can b
 chapter body and sentence rows if needed.
 
 The reader no longer reparses legacy chapter bodies during open. Startup schedules a background
-repair after storage is managed, persists repair lifecycle events, and isolates unreadable books so
-later rows still progress.
+repair after storage is managed and isolates unreadable books so later rows still progress. Event
+history persistence was subsequently removed by decision 0026.
 
 Audio transport was still a separate performance concern when this decision was accepted. Decision
 0012 subsequently moved prepared WAVs to scoped Tauri asset URLs.

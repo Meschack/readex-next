@@ -20,8 +20,8 @@ Reader preferences store nullable family names. A null value selects Sonelle's b
 SpaceMono Nerd Font Propo defaults. A selected system family is quoted before it is composed into
 the appropriate CSS fallback stack.
 
-Typography changes publish `ReaderTypographyChanged`. Independent listeners project the selection,
-persist preferences, and journal the fact.
+Typography changes publish `ReaderTypographyChanged`. Independent listeners project the selection
+and persist preferences. Event history persistence was subsequently removed by decision 0026.
 
 ## Consequences
 

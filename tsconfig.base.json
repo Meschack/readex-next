@@ -21,7 +21,6 @@
       "@sonelle/audio/compatibility": ["./packages/audio/src/narration-compatibility-api.ts"],
       "@sonelle/audio/narration": ["./packages/audio/src/narration-api.ts"],
       "@sonelle/audio/testing": ["./packages/audio/src/narration-fakes.ts"],
-      "@sonelle/storage": ["./packages/storage/src/index.ts"],
       "@sonelle/learning": ["./packages/learning/src/index.ts"]
     }
   }

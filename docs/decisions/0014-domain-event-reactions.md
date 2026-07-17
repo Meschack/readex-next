@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted. Event-persistence details superseded by [0026](0026-ephemeral-domain-events.md).
 
 ## Context
 
@@ -26,9 +26,9 @@ The in-process `DomainEventDispatcher`:
 - reports all listener failures after dispatch completes
 - returns unsubscribe functions for lifecycle cleanup
 
-Renderer-only events use an `EventSink` listener to persist their history in SQLite. Native library
-mutations continue writing their durable event in the same transaction as the mutation; their
-renderer dispatch is used for reactions and is not persisted a second time.
+Domain event dispatch remains an in-process coordination mechanism. Decision 0026 removes the
+event-history persistence that originally accompanied this design; that removal does not change
+producer or listener responsibilities.
 
 ## Consequences
 

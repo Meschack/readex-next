@@ -3,7 +3,7 @@
 ## Owns
 
 - canonical domain-event names and payloads
-- event construction, dispatch, reaction isolation, and transient-event classification
+- event construction, dispatch, and reaction isolation
 - shared entity references and language-code normalization
 
 ## Refuses To Own
@@ -20,9 +20,8 @@ suppress the others.
 
 ## Domain Events
 
-The payload map is the source of truth. Durable facts are appended by application listeners or by
-the native storage transaction that owns the mutation. `TRANSIENT_DOMAIN_EVENT_NAMES` is the
-explicit allowlist for live projections that must not enter the journal.
+The payload map is the source of truth. Events coordinate live application reactions and are not
+classified by durability because Sonelle does not maintain a domain-event journal.
 
 ## Invariants
 
@@ -32,5 +31,5 @@ explicit allowlist for live projections that must not enter the journal.
 
 ## Tests
 
-Package tests cover event ordering, failure isolation, idempotent subscriptions, language aliases,
-and the transient-event allowlist.
+Package tests cover event ordering, failure isolation, idempotent subscriptions, and language
+aliases.

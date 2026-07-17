@@ -5,12 +5,10 @@ import {
   type ReaderPreferences,
   type ReaderTypographyPreferences
 } from "@sonelle/reader";
-import type { EventSink } from "@sonelle/storage";
 import type { ReaderPreferencesRepository } from "./reader-preferences-repository";
 
 interface ReaderTypographyWorkflowDependencies {
   eventDispatcher: DomainEventDispatcher;
-  eventSink: EventSink;
   repository: Pick<ReaderPreferencesRepository, "save">;
   reportEventError(error: unknown): void;
 }
@@ -48,9 +46,6 @@ export function createReaderTypographyWorkflow(
     start() {
       requestedTypography = readerTypographyPreferences(options.currentPreferences());
       const subscriptions = [
-        dependencies.eventDispatcher.subscribe("ReaderTypographyChanged", (event) =>
-          dependencies.eventSink.append(event)
-        ),
         dependencies.eventDispatcher.subscribe("ReaderTypographyChanged", (event) =>
           options.projectTypography(event.payload)
         ),

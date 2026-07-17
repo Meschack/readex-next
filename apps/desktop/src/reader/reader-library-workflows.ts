@@ -1,5 +1,4 @@
 import { createDomainEvent, type DomainEvent, type DomainEventDispatcher } from "@sonelle/domain";
-import type { EventSink } from "@sonelle/storage";
 import type {
   BookCatalog,
   BookImporter,
@@ -9,7 +8,6 @@ import type {
 
 export interface ReaderLibraryWorkflowDependencies {
   eventDispatcher: DomainEventDispatcher;
-  eventSink: EventSink;
   catalog: Pick<BookCatalog, "list">;
   importer: BookImporter;
   bookmarks: Pick<BookmarkStore, "delete" | "save">;
@@ -92,16 +90,7 @@ export function createReaderLibraryWorkflows(
     },
     start() {
       const subscriptions = [
-        dependencies.eventDispatcher.subscribe("BookImportRequested", (event) =>
-          dependencies.eventSink.append(event)
-        ),
-        dependencies.eventDispatcher.subscribe("BookImportRequested", handleImportRequested),
-        dependencies.eventDispatcher.subscribe("BookImportCancelled", (event) =>
-          dependencies.eventSink.append(event)
-        ),
-        dependencies.eventDispatcher.subscribe("BookImportFailed", (event) =>
-          dependencies.eventSink.append(event)
-        )
+        dependencies.eventDispatcher.subscribe("BookImportRequested", handleImportRequested)
       ];
       return () => subscriptions.forEach((unsubscribe) => unsubscribe());
     }

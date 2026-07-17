@@ -10,13 +10,18 @@ describe("reader book export workflow", () => {
     const download = vi.fn();
     const notices: Array<string | null> = [];
     const reader = buildFixtureReaderView();
+    dispatcher.subscribe("BookExportRequested", (event) => {
+      events.push(event);
+    });
+    dispatcher.subscribe("BookExported", (event) => {
+      events.push(event);
+    });
     dispatcher.subscribe("BookExported", () => {
       throw new Error("unrelated projection failed");
     });
     const workflow = createReaderBookExportWorkflow(
       {
         eventDispatcher: dispatcher,
-        eventSink: { append: async (event) => void events.push(event as AnyDomainEvent) },
         exporter: { exportData: vi.fn() },
         download,
         friendlyError: () => "Export failed",

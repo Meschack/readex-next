@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import { createDomainEventDispatcher } from "@sonelle/domain";
-import { createMemoryEventJournal } from "@sonelle/storage";
 import { createReaderLibraryWorkflows } from "./reader-library-workflows";
 
 const importedDocument = {
@@ -27,7 +26,6 @@ describe("reader library workflows", () => {
     dispatcher.subscribe("BookImported", openBookReaction);
     const workflows = createReaderLibraryWorkflows({
       eventDispatcher: dispatcher,
-      eventSink: createMemoryEventJournal(),
       friendlyError: friendlyError,
       catalog: { list: vi.fn().mockResolvedValue([{ id: "book-1" }]) },
       importer: {
@@ -67,7 +65,6 @@ describe("reader library workflows", () => {
     };
     const workflows = createReaderLibraryWorkflows({
       eventDispatcher: dispatcher,
-      eventSink: createMemoryEventJournal(),
       friendlyError,
       catalog: { list: vi.fn().mockResolvedValue([]) },
       importer: { importFromDialog: vi.fn(), importFromPath: vi.fn() },
@@ -101,7 +98,6 @@ describe("reader library workflows", () => {
     dispatcher.subscribe("BookImportFailed", failed);
     const workflows = createReaderLibraryWorkflows({
       eventDispatcher: dispatcher,
-      eventSink: createMemoryEventJournal(),
       friendlyError,
       catalog: { list: vi.fn().mockResolvedValue([]) },
       importer: {
@@ -129,7 +125,6 @@ describe("reader library workflows", () => {
     dispatcher.subscribe("BookImportCancelled", cancelled);
     const workflows = createReaderLibraryWorkflows({
       eventDispatcher: dispatcher,
-      eventSink: createMemoryEventJournal(),
       friendlyError,
       catalog: { list: vi.fn().mockResolvedValue([]) },
       importer: {

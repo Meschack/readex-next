@@ -3,7 +3,6 @@ import {
   createDomainEvent,
   createDomainEventDispatcher,
   DomainEventDispatchError,
-  isTransientDomainEventName,
   normalizeLanguageCode
 } from "./index";
 
@@ -18,13 +17,6 @@ describe("language codes", () => {
 });
 
 describe("domain event dispatcher", () => {
-  it("makes non-durable progress and settings observations explicit", () => {
-    expect(isTransientDomainEventName("VoiceInstallationProgressed")).toBe(true);
-    expect(isTransientDomainEventName("OfflineNarrationFilesInstallationProgressed")).toBe(true);
-    expect(isTransientDomainEventName("NarrationSettingsChanged")).toBe(true);
-    expect(isTransientDomainEventName("VoiceInstallationReady")).toBe(false);
-  });
-
   it("keeps preparation and active-sentence projections as independent facts", async () => {
     const dispatcher = createDomainEventDispatcher();
     const reactions: string[] = [];

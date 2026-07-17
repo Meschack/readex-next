@@ -8,7 +8,6 @@ import {
   type SavedDictionary,
   type WordInsight
 } from "@sonelle/learning";
-import type { EventSink } from "@sonelle/storage";
 import type { DictionaryRepository } from "../learning/dictionary-repository";
 import { lookupReaderWord } from "./reader-word-lookup";
 
@@ -24,7 +23,6 @@ export interface WordInspectionRequest {
 interface ReaderWordInsightWorkflowDependencies {
   dictionary: DictionaryRepository;
   eventDispatcher: DomainEventDispatcher;
-  eventSink: EventSink;
   createLookupId?: () => string;
   onEventError?(error: unknown): void;
 }
@@ -100,9 +98,6 @@ export function createReaderWordInsightWorkflow(
     },
     start() {
       const subscriptions = [
-        dependencies.eventDispatcher.subscribe("WordInspected", (event) =>
-          dependencies.eventSink.append(event)
-        ),
         dependencies.eventDispatcher.subscribe("WordInspected", (event) => {
           options.projectSelection({
             sentenceId: event.payload.sentenceId,
@@ -112,33 +107,21 @@ export function createReaderWordInsightWorkflow(
           options.openWordInspector();
         }),
         dependencies.eventDispatcher.subscribe("WordInspected", lookup),
-        dependencies.eventDispatcher.subscribe("WordLookupStarted", (event) =>
-          dependencies.eventSink.append(event)
-        ),
         dependencies.eventDispatcher.subscribe("WordLookupStarted", (event) => {
           options.projectLookup(
             normalizeInsightKey(event.payload.surface),
             loadingDictionaryLookup()
           );
         }),
-        dependencies.eventDispatcher.subscribe("WordLookupCompleted", (event) =>
-          dependencies.eventSink.append(event)
-        ),
         dependencies.eventDispatcher.subscribe("WordLookupCompleted", (event) => {
           const result = results.get(event.payload.lookupId);
           if (result != null) {
             options.projectLookup(normalizeInsightKey(event.payload.surface), result);
           }
         }),
-        dependencies.eventDispatcher.subscribe("WordSaved", (event) =>
-          dependencies.eventSink.append(event)
-        ),
         dependencies.eventDispatcher.subscribe("WordSaved", () => {
           options.projectSavedDictionary(dependencies.dictionary.loadSavedDictionary());
         }),
-        dependencies.eventDispatcher.subscribe("WordForgotten", (event) =>
-          dependencies.eventSink.append(event)
-        ),
         dependencies.eventDispatcher.subscribe("WordForgotten", () => {
           options.projectSavedDictionary(dependencies.dictionary.loadSavedDictionary());
         })

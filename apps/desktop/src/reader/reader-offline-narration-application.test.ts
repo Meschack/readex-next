@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { createDomainEvent, createDomainEventDispatcher } from "@sonelle/domain";
-import { createMemoryEventJournal } from "@sonelle/storage";
+import {
+  createDomainEvent,
+  createDomainEventDispatcher,
+  type AnyDomainEvent
+} from "@sonelle/domain";
 import type { ReaderNarrationWorkflow } from "./reader-narration-workflow";
 import { createReaderOfflineNarrationApplication } from "./reader-offline-narration-application";
 
@@ -19,9 +22,21 @@ describe("reader offline narration application", () => {
     const reset = vi.fn().mockResolvedValue(undefined);
     const clear = vi.fn().mockResolvedValue({ sentenceCount: 0, sizeBytes: 0 });
     const getStats = vi.fn().mockResolvedValue({ sentenceCount: 2, sizeBytes: 20 });
+    const projectAudioCacheNotice = vi.fn();
+    const reportPreparedAudioError = vi.fn();
     const stopListening = vi.fn();
     const dispatcher = createDomainEventDispatcher();
-    const journal = createMemoryEventJournal();
+    const events: AnyDomainEvent[] = [];
+    for (const name of [
+      "VoiceInstallationRequested",
+      "VoiceInstallationReady",
+      "PreparedNarrationClearingRequested",
+      "PreparedNarrationCleared"
+    ] as const) {
+      dispatcher.subscribe(name, (event) => {
+        events.push(event as AnyDomainEvent);
+      });
+    }
     const settings = {
       playbackRate: 1,
       volume: 1,
@@ -49,7 +64,6 @@ describe("reader offline narration application", () => {
           listen: vi.fn().mockResolvedValue(() => undefined)
         },
         eventDispatcher: dispatcher,
-        eventSink: journal,
         narration,
         offlineLibrary: "individual-voice",
         voiceInstallations: {
@@ -57,13 +71,14 @@ describe("reader offline narration application", () => {
           install,
           listen: vi.fn().mockResolvedValue(stopListening)
         },
-        friendlyError: () => "Narration needs attention."
+        friendlyError: () => "Narration needs attention.",
+        reportPreparedAudioError
       },
       {
         currentBookId: () => "book-1",
         selectedVoiceId: () => "voice-1",
         projectAudioCache: vi.fn(),
-        projectAudioCacheNotice: vi.fn(),
+        projectAudioCacheNotice,
         projectEngineInstallation: vi.fn(),
         projectNarrationProfile: vi.fn(),
         projectNarrationNotice: vi.fn(),
@@ -88,7 +103,7 @@ describe("reader offline narration application", () => {
     expect(reset).toHaveBeenCalledOnce();
     expect(clear).toHaveBeenCalledWith("book-1");
     expect(getStats).toHaveBeenCalledWith("book-1");
-    expect((await journal.readAll()).map((event) => event.name)).toEqual(
+    expect(events.map((event) => event.name)).toEqual(
       expect.arrayContaining([
         "VoiceInstallationRequested",
         "VoiceInstallationReady",
@@ -96,13 +111,23 @@ describe("reader offline narration application", () => {
         "PreparedNarrationCleared"
       ])
     );
+
+    const refreshError = new Error("Could not inspect prepared audio");
+    getStats.mockRejectedValueOnce(refreshError);
+    await application.refreshPreparedAudio();
+    expect(reportPreparedAudioError).toHaveBeenCalledWith(refreshError, "book-1");
+    expect(projectAudioCacheNotice).toHaveBeenLastCalledWith("Narration needs attention.");
+
+    getStats.mockResolvedValueOnce({ sentenceCount: 2, sizeBytes: 20 });
+    await application.refreshPreparedAudio();
+    expect(projectAudioCacheNotice).toHaveBeenLastCalledWith(null);
+
     stop();
     expect(stopListening).toHaveBeenCalledOnce();
   });
 
   it("projects ready provider files immediately after installation completes", async () => {
     const dispatcher = createDomainEventDispatcher();
-    const journal = createMemoryEventJournal();
     const projectEngineInstallation = vi.fn();
     const projectNarrationProfile = vi.fn();
     const readyEngines = new Set<string>();
@@ -138,7 +163,6 @@ describe("reader offline narration application", () => {
           listen: vi.fn().mockResolvedValue(() => undefined)
         },
         eventDispatcher: dispatcher,
-        eventSink: journal,
         narration,
         offlineLibrary: "language-pack",
         voiceInstallations: {

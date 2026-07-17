@@ -17,7 +17,6 @@ import {
   PiperCompatibilityAdapter,
   type PrefetchingNarrationGateway
 } from "@sonelle/audio/compatibility";
-import type { EventSink } from "@sonelle/storage";
 import {
   createAudioCacheRepository,
   type AudioCacheRepository
@@ -64,7 +63,6 @@ import { createBookmarkStore } from "../library/bookmark-store";
 import { createLibrarySearch } from "../library/library-search";
 import { createReadingPositionStore } from "../library/reading-position-store";
 import { isTauriRuntime } from "../platform/tauri-runtime";
-import { createDomainEventSink } from "../platform/domain-event-sink";
 import { createSystemFontCatalog, type SystemFontCatalog } from "../platform/system-font-catalog";
 import {
   createParagraphImageExporter,
@@ -106,7 +104,6 @@ export interface ReaderExperienceDependencies {
   dictionaryRepository: DictionaryRepository;
   engineInstallationRepository: EngineInstallationRepository;
   eventDispatcher: DomainEventDispatcher;
-  eventSink: EventSink;
   fontCatalog: SystemFontCatalog;
   librarySearch: LibrarySearch;
   narration: ReaderNarrationService;
@@ -128,7 +125,6 @@ export function createReaderExperienceDependencies(): ReaderExperienceDependenci
     narrationRepository
   );
   const bookCatalog = createBookCatalog();
-  const eventSink = createDomainEventSink();
   const usesLanguagePacks = narrationSessionRoutingMode === "hybrid-v1";
   const engineInstallations: Partial<Record<NarrationEngineId, EngineInstallationState>> = {};
 
@@ -146,7 +142,6 @@ export function createReaderExperienceDependencies(): ReaderExperienceDependenci
     dictionaryRepository: createDictionaryRepository(),
     engineInstallationRepository: createEngineInstallationRepository(),
     eventDispatcher,
-    eventSink,
     fontCatalog: createSystemFontCatalog(),
     librarySearch: createLibrarySearch(),
     narration: {
@@ -178,7 +173,6 @@ export function createReaderExperienceDependencies(): ReaderExperienceDependenci
         const prefetchWorkflow = createReaderNarrationPrefetchWorkflow({
           adapter: narrationPreparationAdapter,
           eventDispatcher,
-          eventSink,
           repository: bookCatalog,
           routingMode: narrationSessionRoutingMode,
           engineInstallations: () => engineInstallations
@@ -186,7 +180,6 @@ export function createReaderExperienceDependencies(): ReaderExperienceDependenci
         return createReaderNarrationWorkflow(
           {
             eventDispatcher,
-            eventSink,
             prefetchWorkflow,
             routingMode: narrationSessionRoutingMode,
             session

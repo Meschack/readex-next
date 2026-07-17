@@ -8,17 +8,20 @@ Accepted.
 
 Sonelle word tools are dictionary-first. A user clicks or taps a word, Sonelle looks up that word through a public dictionary API, then displays the definition in the popover and side inspector.
 
-Sonelle uses DictionaryAPI for direct English lookups and FreeDictionaryAPI for non-English
-lookups and multilingual fallback:
+Sonelle uses DictionaryAPI for direct English lookups, the French Wiktionary Action API for
+French-language definitions, and FreeDictionaryAPI for other non-English lookups and multilingual
+fallback:
 
 ```text
 https://api.dictionaryapi.dev/api/v2/entries/en/<word>
+https://fr.wiktionary.org/w/api.php?action=parse&page=<word>&prop=text
 https://freedictionaryapi.com/api/v1/entries/<language>/<word>
 ```
 
-Book language metadata selects the lookup language. Both APIs return definitions and related
-dictionary metadata without requiring an API key. English 404 responses fall back to the
-multilingual endpoint so the reader can recover when EPUB metadata is incomplete.
+Book language metadata selects the lookup language. French lookups use the French Wiktionary
+edition so definitions are written in French rather than translated into English. The providers do
+not require an API key. English 404 responses fall back to the multilingual endpoint so the reader
+can recover when EPUB metadata is incomplete.
 
 The user can save a returned dictionary entry. Saved entries are stored locally and reused before the app makes another remote lookup.
 

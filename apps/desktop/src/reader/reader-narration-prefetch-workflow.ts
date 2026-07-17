@@ -4,7 +4,6 @@ import type {
   NarrationPreparationAdapter,
   NarrationRoutingMode
 } from "@sonelle/audio/narration";
-import type { EventSink } from "@sonelle/storage";
 import type { BookCatalog } from "../library/library-contracts";
 import { createReaderNarrationPreparationRequests } from "./reader-narration";
 import { buildReaderViewFromDocument } from "./reader-view";
@@ -22,7 +21,6 @@ export interface UpcomingNarrationRequest {
 interface ReaderNarrationPrefetchWorkflowDependencies {
   adapter: NarrationPreparationAdapter;
   eventDispatcher: DomainEventDispatcher;
-  eventSink: EventSink;
   repository: BookCatalog;
   routingMode: NarrationRoutingMode;
   engineInstallations(): Partial<Record<NarrationEngineId, { modelRevision: string }>>;
@@ -119,18 +117,9 @@ export function createReaderNarrationPrefetchWorkflow(
     reset,
     start() {
       const subscriptions = [
-        dependencies.eventDispatcher.subscribe("UpcomingNarrationPreparationRequested", (event) =>
-          dependencies.eventSink.append(event)
-        ),
         dependencies.eventDispatcher.subscribe(
           "UpcomingNarrationPreparationRequested",
           handleRequested
-        ),
-        dependencies.eventDispatcher.subscribe("UpcomingNarrationPreparationReady", (event) =>
-          dependencies.eventSink.append(event)
-        ),
-        dependencies.eventDispatcher.subscribe("UpcomingNarrationPreparationFailed", (event) =>
-          dependencies.eventSink.append(event)
         )
       ];
       return () => {

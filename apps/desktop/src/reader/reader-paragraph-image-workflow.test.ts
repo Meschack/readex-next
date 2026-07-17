@@ -1,13 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { createDomainEventDispatcher, type AnyDomainEvent } from "@sonelle/domain";
-import { createMemoryEventJournal } from "@sonelle/storage";
 import { buildFixtureReaderView } from "./reader-view";
 import { createReaderParagraphImageWorkflow } from "./reader-paragraph-image-workflow";
 
 describe("reader paragraph image workflow", () => {
   it("exports the paragraph containing the active sentence through domain events", async () => {
     const dispatcher = createDomainEventDispatcher();
-    const journal = createMemoryEventJournal();
     const reader = buildFixtureReaderView();
     const exporter = { export: vi.fn().mockResolvedValue("passage.png") };
     const projectNotice = vi.fn();
@@ -19,7 +17,7 @@ describe("reader paragraph image workflow", () => {
       events.push(event);
     });
     const workflow = createReaderParagraphImageWorkflow(
-      { eventDispatcher: dispatcher, eventSink: journal, exporter },
+      { eventDispatcher: dispatcher, exporter },
       {
         currentReader: () => reader,
         currentSentenceIndex: () => 1,
@@ -59,7 +57,6 @@ describe("reader paragraph image workflow", () => {
     const workflow = createReaderParagraphImageWorkflow(
       {
         eventDispatcher: dispatcher,
-        eventSink: createMemoryEventJournal(),
         exporter: { export: vi.fn().mockRejectedValue(error) },
         onError
       },

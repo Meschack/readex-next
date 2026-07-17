@@ -1,20 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 import { createDomainEventDispatcher, type AnyDomainEvent } from "@sonelle/domain";
 import { FakePassageNarrationAdapter } from "@sonelle/audio/testing";
-import type { EventSink } from "@sonelle/storage";
 import type { ReaderDocumentDto } from "../library/library-models";
 import { createReaderNarrationPrefetchWorkflow } from "./reader-narration-prefetch-workflow";
 
 describe("reader narration prefetch workflow", () => {
-  it("turns an upcoming-chapter request into persisted lifecycle facts", async () => {
+  it("turns an upcoming-chapter request into published lifecycle facts", async () => {
     const dispatcher = createDomainEventDispatcher();
     const events: AnyDomainEvent[] = [];
+    observePrefetchEvents(dispatcher, events);
     const adapter = new FakePassageNarrationAdapter();
     const prepare = vi.fn(adapter.prepare.bind(adapter));
     const workflow = createReaderNarrationPrefetchWorkflow({
       adapter: { prepare },
       eventDispatcher: dispatcher,
-      eventSink: collectingSink(events),
       repository: { list: async () => [], open: async () => nextChapterDocument() },
       routingMode: "hybrid-v1",
       engineInstallations: () => ({ kokoro: { modelRevision: "kokoro-test" } })
@@ -36,11 +35,11 @@ describe("reader narration prefetch workflow", () => {
   it("publishes failures and permits an explicit retry", async () => {
     const dispatcher = createDomainEventDispatcher();
     const events: AnyDomainEvent[] = [];
+    observePrefetchEvents(dispatcher, events);
     const prepare = vi.fn().mockRejectedValueOnce(new Error("render failed"));
     const workflow = createReaderNarrationPrefetchWorkflow({
       adapter: { prepare },
       eventDispatcher: dispatcher,
-      eventSink: collectingSink(events),
       repository: { list: async () => [], open: async () => nextChapterDocument() },
       routingMode: "hybrid-v1",
       engineInstallations: () => ({ kokoro: { modelRevision: "kokoro-test" } })
@@ -58,12 +57,19 @@ describe("reader narration prefetch workflow", () => {
   });
 });
 
-function collectingSink(events: AnyDomainEvent[]): EventSink {
-  return {
-    async append(event) {
+function observePrefetchEvents(
+  dispatcher: ReturnType<typeof createDomainEventDispatcher>,
+  events: AnyDomainEvent[]
+) {
+  for (const name of [
+    "UpcomingNarrationPreparationRequested",
+    "UpcomingNarrationPreparationReady",
+    "UpcomingNarrationPreparationFailed"
+  ] as const) {
+    dispatcher.subscribe(name, (event) => {
       events.push(event as AnyDomainEvent);
-    }
-  };
+    });
+  }
 }
 
 function request() {

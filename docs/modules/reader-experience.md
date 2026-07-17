@@ -3,7 +3,7 @@
 ## Owns
 
 - composing the reader's UI state and user workflows
-- coordinating library, narration, dictionary, preferences, dispatcher, and event-sink interfaces
+- coordinating library, narration, dictionary, preferences, and dispatcher interfaces
 - projecting domain state into reader, library, and inspector surfaces
 
 ## Refuses To Own
@@ -21,6 +21,10 @@ The composition root exposes stable, getter-backed view models to the library an
 surfaces. Each model is split by responsibility so those surfaces receive one meaningful interface
 instead of mirroring every signal and workflow as a component prop.
 
+The Tools inspector exposes separate color swatches for active narration and bookmarked passages.
+The reader shell projects those preferences as CSS variables and derives readable foreground colors
+without putting persistence or validation logic in Solid components.
+
 Rendered paragraphs receive layout data directly and obtain reading interactions from the scoped
 `ReaderContentProvider`. The provider owns no state or services; it only exposes reader-content
 actions and projections for the current reader tree. Active-sentence membership uses Solid's
@@ -30,10 +34,9 @@ than every visible sentence.
 ## Domain Events
 
 Library workflows complete their core operation and dispatch the resulting event. `ReaderOpened`
-and `ReaderClosed` independently drive playback, surfaces, rails, bookmark refresh, and persistence.
-Settings, lookup, installation, export, cache clearing, and narration reactions follow the same
-pattern. Events on the domain transient allowlist remain live projections; other renderer events use
-an `EventSink`, while native library mutations record durable facts inside their storage transaction.
+and `ReaderClosed` independently drive playback, surfaces, rails, and bookmark refresh. Settings,
+lookup, installation, export, cache clearing, and narration reactions follow the same pattern.
+Domain events are dispatched to live listeners and are not journaled in the database.
 
 ## Invariants
 

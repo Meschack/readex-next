@@ -10,12 +10,9 @@ Core event examples:
 
 - `BookImportRequested`
 - `BookImported`
-- `BookTextExtracted`
-- `ChapterSegmented`
 - `NarrationPreparationStarted`
 - `PassageNarrationReady`
 - `NarrationPlaybackFailed`
-- `PlaybackPositionChanged`
 - `WordInspected`
 - `BookmarkCreated`
 - `BookmarkDeleted`
@@ -26,8 +23,8 @@ Events are domain language. They should not mention worker internals, chunk impl
 
 The canonical payload map, event factory, and dispatcher live in `@sonelle/domain`. Producers
 complete their core operation and dispatch the resulting fact. Registered listeners own follow-up
-reactions. The append-only `EventSink` is one listener used to persist renderer events to SQLite;
-it is not the orchestration mechanism.
+reactions. Dispatch is intentionally in-process and is not recorded in SQLite. Durable product
+state belongs in purpose-built repositories and projections, not in a general event journal.
 
 ## Module Map
 

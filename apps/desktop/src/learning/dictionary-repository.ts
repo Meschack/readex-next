@@ -2,6 +2,7 @@ import {
   createSavedDictionary,
   normalizeInsightKey,
   parseDictionaryApiResponse,
+  parseFrenchWiktionaryApiResponse,
   parseFreeDictionaryApiResponse,
   parseSavedDictionary,
   serializeSavedDictionary,
@@ -13,6 +14,7 @@ import { normalizeLanguageCode } from "@sonelle/domain";
 const savedDictionaryKey = "sonelle.dictionary.saved.v1";
 const englishDictionaryApiUrl = "https://api.dictionaryapi.dev/api/v2/entries/en";
 const multilingualDictionaryApiUrl = "https://freedictionaryapi.com/api/v1/entries";
+const frenchWiktionaryApiUrl = "https://fr.wiktionary.org/w/api.php";
 
 export interface DictionaryRepository {
   lookupWord(surface: string, language?: string | null): Promise<DictionaryEntry | null>;
@@ -27,6 +29,8 @@ export function createDictionaryRepository(): DictionaryRepository {
       if (key.length === 0) return null;
 
       const languageCode = normalizeLanguageCode(language) ?? "en";
+      if (languageCode === "fr") return lookupFrenchDefinition(surface, key);
+
       const response = await fetch(
         languageCode === "en"
           ? `${englishDictionaryApiUrl}/${encodeURIComponent(key)}`
@@ -65,6 +69,19 @@ export function createDictionaryRepository(): DictionaryRepository {
       }
     }
   };
+}
+
+async function lookupFrenchDefinition(
+  surface: string,
+  key: string
+): Promise<DictionaryEntry | null> {
+  const response = await fetch(
+    `${frenchWiktionaryApiUrl}?action=parse&page=${encodeURIComponent(key)}&prop=text&format=json&formatversion=2&origin=*`
+  );
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error("Dictionary lookup needs attention.");
+
+  return parseFrenchWiktionaryApiResponse(surface, await response.json());
 }
 
 async function lookupAcrossLanguages(

@@ -310,11 +310,12 @@ export interface ReaderSettingsInspectorModel {
   readerContentFontSize: number;
   readerContentFontFamily: string | null;
   uiFontFamily: string | null;
+  narrationHighlightColor: string;
+  bookmarkHighlightColor: string;
   systemFontFamilies: readonly string[];
   audioCacheStats: PreparedAudioView | null;
   audioCacheNotice: string | null;
   exportNotice: string | null;
-  errorLogPath: string | null;
   onAudioSettingsChange: (settings: Partial<AudioSettings>) => void;
   onInstallVoice: () => void;
   onInstallNarrationProfile: (profileId: OfflineNarrationProfileId) => void;
@@ -322,11 +323,12 @@ export interface ReaderSettingsInspectorModel {
   onReaderContentFontSizeChange: (fontSize: number) => void;
   onReaderContentFontFamilyChange: (fontFamily: string | null) => void;
   onUiFontFamilyChange: (fontFamily: string | null) => void;
+  onNarrationHighlightColorChange: (color: string) => void;
+  onBookmarkHighlightColorChange: (color: string) => void;
   onResetAudioSettings: () => void;
   onRefreshCache: () => void;
   onClearCache: () => void;
   onExportBook: () => void;
-  onRevealErrorLog: () => void;
 }
 
 function SettingsPanel(componentProps: { model: ReaderSettingsInspectorModel }) {
@@ -377,6 +379,12 @@ function SettingsPanel(componentProps: { model: ReaderSettingsInspectorModel }) 
         families={props.systemFontFamilies}
         onChange={props.onUiFontFamilyChange}
       />
+      <ReadingColorSettings
+        narrationColor={props.narrationHighlightColor}
+        bookmarkColor={props.bookmarkHighlightColor}
+        onNarrationColorChange={props.onNarrationHighlightColorChange}
+        onBookmarkColorChange={props.onBookmarkHighlightColorChange}
+      />
       <label class="toggle-row settings-toggle">
         <span>
           <strong>Auto-advance</strong>
@@ -419,7 +427,7 @@ function SettingsPanel(componentProps: { model: ReaderSettingsInspectorModel }) 
             : `${props.audioCacheStats.sentenceCount} sentence${props.audioCacheStats.sentenceCount === 1 ? "" : "s"} · ${formatBytes(props.audioCacheStats.sizeBytes)}`}
         </p>
         <div class="dictionary-actions">
-          <button type="button" onClick={props.onRefreshCache}>
+          <button type="button" onClick={() => props.onRefreshCache()}>
             Refresh
           </button>
           <button type="button" onClick={props.onClearCache}>
@@ -439,20 +447,54 @@ function SettingsPanel(componentProps: { model: ReaderSettingsInspectorModel }) 
           {(notice) => <p class="library-notice">{notice()}</p>}
         </Show>
       </div>
-      <div class="tool-card diagnostics-card">
-        <span class="inspector-section-title">Diagnostics</span>
-        <p>App errors are recorded here in development and production.</p>
-        <code class="diagnostics-path">{props.errorLogPath ?? "Preparing error.json"}</code>
-        <button
-          class="primary-tool-button"
-          type="button"
-          disabled={props.errorLogPath == null}
-          onClick={props.onRevealErrorLog}
-        >
-          Show error log
-        </button>
-      </div>
     </section>
+  );
+}
+
+function ReadingColorSettings(props: {
+  narrationColor: string;
+  bookmarkColor: string;
+  onNarrationColorChange: (color: string) => void;
+  onBookmarkColorChange: (color: string) => void;
+}) {
+  return (
+    <div class="setting-field reader-color-settings">
+      <span class="inspector-section-title">Reading colors</span>
+      <div class="reader-color-controls">
+        <ReaderColorControl
+          label="Narration highlight"
+          value={props.narrationColor}
+          onChange={props.onNarrationColorChange}
+        />
+        <ReaderColorControl
+          label="Bookmark highlight"
+          value={props.bookmarkColor}
+          onChange={props.onBookmarkColorChange}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ReaderColorControl(props: {
+  label: string;
+  value: string;
+  onChange: (color: string) => void;
+}) {
+  return (
+    <label class="reader-color-control">
+      <span class="reader-color-copy">
+        <strong>{props.label}</strong>
+        <small>{props.value.toUpperCase()}</small>
+      </span>
+      <input
+        class="reader-color-input"
+        type="color"
+        aria-label={`${props.label} color`}
+        value={props.value}
+        onInput={(event) => props.onChange(event.currentTarget.value)}
+      />
+    </label>
   );
 }
 

@@ -7,7 +7,7 @@ export interface LibraryBookSummary {
   chapterCount: number;
   sentenceCount: number;
   lastChapterId: string | null;
-  lastSentenceIndex: number;
+  completedSentenceCount: number;
 }
 
 export interface ReaderDocumentDto {

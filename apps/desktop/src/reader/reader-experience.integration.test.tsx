@@ -6,7 +6,6 @@ import { DEFAULT_AUDIO_SETTINGS, SUPPORTED_NARRATION_VOICES } from "@sonelle/aud
 import { createDomainEvent, createDomainEventDispatcher } from "@sonelle/domain";
 import { createSavedDictionary } from "@sonelle/learning";
 import { createReaderPreferences, type ReaderPreferences } from "@sonelle/reader";
-import { createMemoryEventJournal } from "@sonelle/storage";
 import type { ReaderExperienceDependencies } from "./reader-dependencies";
 import { ReaderExperience } from "./reader-experience";
 import type { ReaderNarrationWorkflow } from "./reader-narration-workflow";
@@ -114,6 +113,67 @@ describe("ReaderExperience integration", () => {
     container.remove();
   });
 
+  it("loads and persists configurable narration and bookmark colors", async () => {
+    const savePreferences = vi.fn();
+    const dependencies = createDependencies({
+      dispatcher: createDomainEventDispatcher(),
+      pause: vi.fn().mockResolvedValue(undefined),
+      stopNarration: vi.fn(),
+      stopDrops: vi.fn(),
+      stopVoiceEvents: vi.fn(),
+      savePreferences,
+      readerPreferences: createReaderPreferences({
+        narrationHighlightColor: "#abcdef",
+        bookmarkHighlightColor: "#123456"
+      })
+    });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const dispose = render(() => <ReaderExperience dependencies={dependencies} />, container);
+    const shell = container.querySelector<HTMLElement>(".sonelle-shell");
+
+    expect(shell?.style.getPropertyValue("--narration-highlight")).toBe("#abcdef");
+    expect(shell?.style.getPropertyValue("--narration-highlight-ink")).toBe("#242625");
+    expect(shell?.style.getPropertyValue("--bookmark-highlight")).toBe("#123456");
+    expect(shell?.style.getPropertyValue("--bookmark-highlight-ink")).toBe("#ffffff");
+
+    savePreferences.mockClear();
+    clickInspectorTab(container, "Tools");
+    const narrationColor = container.querySelector<HTMLInputElement>(
+      '[aria-label="Narration highlight color"]'
+    );
+    const bookmarkColor = container.querySelector<HTMLInputElement>(
+      '[aria-label="Bookmark highlight color"]'
+    );
+    expect(narrationColor).not.toBeNull();
+    expect(bookmarkColor).not.toBeNull();
+
+    if (narrationColor != null) {
+      narrationColor.value = "#102030";
+      narrationColor.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    if (bookmarkColor != null) {
+      bookmarkColor.value = "#ddeeff";
+      bookmarkColor.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+
+    await vi.waitFor(() => {
+      expect(shell?.style.getPropertyValue("--narration-highlight")).toBe("#102030");
+      expect(shell?.style.getPropertyValue("--bookmark-highlight")).toBe("#ddeeff");
+      expect(savePreferences).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          narrationHighlightColor: "#102030",
+          bookmarkHighlightColor: "#ddeeff"
+        })
+      );
+    });
+    expect(shell?.style.getPropertyValue("--narration-highlight-ink")).toBe("#ffffff");
+    expect(shell?.style.getPropertyValue("--bookmark-highlight-ink")).toBe("#242625");
+
+    dispose();
+    container.remove();
+  });
+
   it("restores and persists resized reader rails", async () => {
     let persistedPreferences = createReaderPreferences({
       libraryRailWidth: 360,
@@ -209,6 +269,40 @@ describe("ReaderExperience integration", () => {
     expect(container.querySelector('[aria-label="Narration speed"]')).not.toBeNull();
     expect(container.querySelector('[aria-label="Book content font"]')).not.toBeNull();
     expect(container.textContent).toContain("Prepared audio for this book");
+    expect(container.textContent).not.toContain("Diagnostics");
+
+    dispose();
+    container.remove();
+  });
+
+  it("refreshes prepared audio for the active book", async () => {
+    const getAudioCacheStats = vi
+      .fn<(bookId: string) => Promise<{ sentenceCount: number; sizeBytes: number }>>()
+      .mockResolvedValue({ sentenceCount: 8, sizeBytes: 6_800_000 });
+    const dependencies = createDependencies({
+      dispatcher: createDomainEventDispatcher(),
+      pause: vi.fn().mockResolvedValue(undefined),
+      stopNarration: vi.fn(),
+      stopDrops: vi.fn(),
+      stopVoiceEvents: vi.fn(),
+      getAudioCacheStats
+    });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const dispose = render(() => <ReaderExperience dependencies={dependencies} />, container);
+
+    await vi.waitFor(() => expect(getAudioCacheStats).toHaveBeenCalled());
+    getAudioCacheStats.mockClear();
+    clickInspectorTab(container, "Tools");
+    const refresh = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.trim() === "Refresh"
+    );
+    expect(refresh).not.toBeUndefined();
+    refresh?.click();
+
+    await vi.waitFor(() => expect(getAudioCacheStats).toHaveBeenCalledOnce());
+    expect(getAudioCacheStats).toHaveBeenCalledWith(buildFixtureReaderView().book.id);
+    expect(container.textContent).not.toContain("Narration needs attention");
 
     dispose();
     container.remove();
@@ -304,6 +398,7 @@ interface DependencySpies {
     author: string;
     chapterTitle: string;
   }) => Promise<string>;
+  getAudioCacheStats?: (bookId: string) => Promise<{ sentenceCount: number; sizeBytes: number }>;
 }
 
 function createDependencies(spies: DependencySpies): ReaderExperienceDependencies {
@@ -327,7 +422,8 @@ function createDependencies(spies: DependencySpies): ReaderExperienceDependencie
 
   return {
     audioCacheRepository: {
-      getStats: vi.fn().mockResolvedValue({ sentenceCount: 0, sizeBytes: 0 }),
+      getStats:
+        spies.getAudioCacheStats ?? vi.fn().mockResolvedValue({ sentenceCount: 0, sizeBytes: 0 }),
       clear: vi.fn().mockResolvedValue({ sentenceCount: 0, sizeBytes: 0 })
     },
     audioSettingsRepository: {
@@ -382,7 +478,6 @@ function createDependencies(spies: DependencySpies): ReaderExperienceDependencie
       listen: vi.fn().mockResolvedValue(() => undefined)
     },
     eventDispatcher: spies.dispatcher,
-    eventSink: createMemoryEventJournal(),
     fontCatalog: { listFamilies: vi.fn().mockResolvedValue(["Inter", "Literata"]) },
     librarySearch: { search: vi.fn().mockResolvedValue([]) },
     narration: {

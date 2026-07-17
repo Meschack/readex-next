@@ -1,12 +1,10 @@
 import { createDomainEvent, type DomainEventDispatcher } from "@sonelle/domain";
 import type { PlaybackStatus } from "@sonelle/reader";
-import type { EventSink } from "@sonelle/storage";
 import type { ReaderPlaybackApplication } from "./reader-playback-application";
 import type { ReaderView } from "./reader-view";
 
 interface ReaderOpeningDependencies {
   eventDispatcher: DomainEventDispatcher;
-  eventSink: EventSink;
   playback: Pick<ReaderPlaybackApplication, "activate">;
   reportEventError(error: unknown): void;
 }
@@ -56,9 +54,6 @@ export function createReaderOpeningWorkflow(
     },
     start() {
       const subscriptions = [
-        dependencies.eventDispatcher.subscribe("ReaderOpened", (event) =>
-          dependencies.eventSink.append(event)
-        ),
         dependencies.eventDispatcher.subscribe("ReaderOpened", (event) => {
           const opening = pending.get(event.id);
           if (opening != null) {

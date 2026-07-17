@@ -54,8 +54,8 @@ Exit condition: the native desktop path is covered independently of browser fall
 ### 2. Separate Production Adapters From Test Fakes
 
 - Make `createReaderExperienceDependencies` construct desktop adapters directly.
-- Move `FakeNarrationGateway`, memory event journals, and repository fakes into test-support modules
-  or keep them in shared packages only when they are legitimate public testing interfaces.
+- Move `FakeNarrationGateway` and repository fakes into test-support modules or keep them in shared
+  packages only when they are legitimate public testing interfaces.
 - Remove `isTauriRuntime` checks from production repositories.
 - Fail clearly during development if required Tauri APIs are unavailable instead of silently
   switching behavior.
@@ -66,7 +66,6 @@ Exit condition: opening the renderer outside Tauri cannot masquerade as a functi
 
 - Delete the browser book and bookmark repository.
 - Delete browser audio-cache and voice-installation fallbacks.
-- Remove the production memory event sink fallback.
 - Decide whether preferences, dictionary entries, and audio settings remain in webview
   `localStorage` or move into native storage. The recommended choice is native storage so backup,
   migration, and reset behavior share one application-data boundary.

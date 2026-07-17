@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import { createDomainEventDispatcher, type AnyDomainEvent } from "@sonelle/domain";
-import type { EventSink } from "@sonelle/storage";
 import type {
   EngineInstallationRepository,
   EngineInstallationState,
@@ -19,7 +18,7 @@ const readyInstallation: EngineInstallationState = {
 };
 
 describe("reader engine installation workflow", () => {
-  it("turns one request into a persisted ready lifecycle", async () => {
+  it("turns one request into a published ready lifecycle", async () => {
     const harness = createHarness({ result: readyInstallation });
     const stop = await harness.workflow.start();
 
@@ -62,7 +61,7 @@ describe("reader engine installation workflow", () => {
     stop();
   });
 
-  it("projects transient native progress without journaling it", async () => {
+  it("projects transient native progress without publishing a lifecycle event", async () => {
     const harness = createHarness({ result: readyInstallation });
     const stop = await harness.workflow.start();
 
@@ -84,11 +83,17 @@ describe("reader engine installation workflow", () => {
 function createHarness(outcome: { result: EngineInstallationState } | { error: Error }) {
   const dispatcher = createDomainEventDispatcher();
   const events: AnyDomainEvent[] = [];
+  for (const name of [
+    "OfflineNarrationFilesInstallationRequested",
+    "OfflineNarrationFilesInstallationReady",
+    "OfflineNarrationFilesInstallationFailed"
+  ] as const) {
+    dispatcher.subscribe(name, (event) => {
+      events.push(event as AnyDomainEvent);
+    });
+  }
   const states: EngineInstallationState[] = [];
   const notices: Array<string | null> = [];
-  const eventSink: EventSink = {
-    append: async (event) => void events.push(event as AnyDomainEvent)
-  };
   const install = vi.fn(async (engineId: NarrationEngineId) => {
     if ("error" in outcome) throw outcome.error;
     return { ...outcome.result, engineId };
@@ -104,7 +109,6 @@ function createHarness(outcome: { result: EngineInstallationState } | { error: E
   };
   const workflow = createReaderEngineInstallationWorkflow({
     eventDispatcher: dispatcher,
-    eventSink,
     repository,
     projectInstallation: (state) => states.push(state),
     projectNotice: (notice) => notices.push(notice),

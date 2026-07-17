@@ -19,26 +19,6 @@ export interface DomainEventPayloadMap {
     chapterCount: number;
     replacedExisting: boolean;
   };
-  BookTextExtracted: { bookId: EntityId; chapterCount: number };
-  ChapterSegmented: { bookId: EntityId; chapterId: EntityId; sentenceCount: number };
-  ChapterParagraphsRecovered: {
-    bookId: EntityId;
-    chapterId: EntityId;
-    paragraphCount: number;
-  };
-  BookLanguageRecovered: { bookId: EntityId; language: string };
-  LegacyLibraryRepairStarted: { batchSize: number };
-  LegacyLibraryRepairProgressed: {
-    examinedCount: number;
-    repairedCount: number;
-    failedCount: number;
-  };
-  LegacyLibraryRepairCompleted: {
-    examinedCount: number;
-    repairedCount: number;
-    failedCount: number;
-  };
-  LegacyLibraryRepairFailed: { reason: string };
   NarrationPlaybackRequested: SentenceRef & { voiceId: string };
   NarrationPreparationStarted: SentenceRef & { passageId: EntityId };
   PassageNarrationReady: {
@@ -117,11 +97,6 @@ export interface DomainEventPayloadMap {
   PreparedNarrationClearingRequested: { bookId: EntityId };
   PreparedNarrationCleared: { bookId: EntityId; sentenceCount: number; sizeBytes: number };
   PreparedNarrationClearingFailed: { bookId: EntityId; reason: string };
-  PlaybackPositionChanged: {
-    bookId: EntityId;
-    chapterId: EntityId;
-    sentenceIndex: number;
-  };
   ReaderOpened: {
     bookId: EntityId;
     chapterId: EntityId;
@@ -135,6 +110,10 @@ export interface DomainEventPayloadMap {
     contentFontSize: number;
     contentFontFamily: string | null;
     uiFontFamily: string | null;
+  };
+  ReaderAppearanceChanged: {
+    narrationHighlightColor: string;
+    bookmarkHighlightColor: string;
   };
   WordInspected: SentenceRef & { surface: string; language: string | null; tokenIndex: number };
   WordLookupStarted: { lookupId: EntityId; surface: string };
@@ -171,20 +150,6 @@ export interface DomainEventPayloadMap {
 }
 
 export type DomainEventName = keyof DomainEventPayloadMap;
-
-export const TRANSIENT_DOMAIN_EVENT_NAMES = [
-  "NarrationSettingsChanged",
-  "VoiceInstallationProgressed",
-  "OfflineNarrationFilesInstallationProgressed"
-] as const satisfies readonly DomainEventName[];
-
-export type TransientDomainEventName = (typeof TRANSIENT_DOMAIN_EVENT_NAMES)[number];
-
-export function isTransientDomainEventName(
-  name: DomainEventName
-): name is TransientDomainEventName {
-  return TRANSIENT_DOMAIN_EVENT_NAMES.includes(name as TransientDomainEventName);
-}
 
 export interface DomainEvent<TName extends DomainEventName = DomainEventName> {
   id: EntityId;

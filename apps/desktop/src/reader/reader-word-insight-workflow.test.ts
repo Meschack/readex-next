@@ -10,9 +10,20 @@ import {
 import { createReaderWordInsightWorkflow } from "./reader-word-insight-workflow";
 
 describe("reader word insight workflow", () => {
-  it("turns inspection and lookup into persisted facts before projecting results", async () => {
+  it("turns inspection and lookup into published facts before projecting results", async () => {
     const dispatcher = createDomainEventDispatcher();
     const events: AnyDomainEvent[] = [];
+    for (const name of [
+      "WordInspected",
+      "WordLookupStarted",
+      "WordLookupCompleted",
+      "WordSaved",
+      "WordForgotten"
+    ] as const) {
+      dispatcher.subscribe(name, (event) => {
+        events.push(event as AnyDomainEvent);
+      });
+    }
     const selections: string[] = [];
     const lookups: DictionaryLookupResult[] = [];
     const savedProjections: SavedDictionary[] = [];
@@ -37,7 +48,6 @@ describe("reader word insight workflow", () => {
           }
         },
         eventDispatcher: dispatcher,
-        eventSink: { append: async (event) => void events.push(event as AnyDomainEvent) },
         createLookupId: () => "lookup-1"
       },
       {

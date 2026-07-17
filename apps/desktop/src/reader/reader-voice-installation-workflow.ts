@@ -1,5 +1,4 @@
 import { createDomainEvent, type DomainEvent, type DomainEventDispatcher } from "@sonelle/domain";
-import type { EventSink } from "@sonelle/storage";
 import {
   failedVoiceInstallation,
   type VoiceInstallationRepository,
@@ -9,7 +8,6 @@ import { reportAppError } from "../platform/error-reporting";
 
 interface ReaderVoiceInstallationWorkflowDependencies {
   eventDispatcher: DomainEventDispatcher;
-  eventSink: EventSink;
   repository: VoiceInstallationRepository;
   selectedVoiceId(): string;
   projectInstallation(state: VoiceInstallationState): void;
@@ -72,9 +70,6 @@ export function createReaderVoiceInstallationWorkflow(
 
     async start() {
       const subscriptions = [
-        dependencies.eventDispatcher.subscribe("VoiceInstallationRequested", (event) =>
-          dependencies.eventSink.append(event)
-        ),
         dependencies.eventDispatcher.subscribe("VoiceInstallationRequested", (event) => {
           if (!isSelected(event.payload.voiceId)) return;
           dependencies.projectInstallation(preparingVoiceInstallation(event.payload.voiceId));
@@ -86,18 +81,12 @@ export function createReaderVoiceInstallationWorkflow(
             dependencies.projectInstallation(event.payload);
           }
         }),
-        dependencies.eventDispatcher.subscribe("VoiceInstallationReady", (event) =>
-          dependencies.eventSink.append(event)
-        ),
         dependencies.eventDispatcher.subscribe("VoiceInstallationReady", (event) => {
           dependencies.projectNotice(null);
           return dependencies.repository.getStatus(event.payload.voiceId).then((installation) => {
             if (isSelected(event.payload.voiceId)) dependencies.projectInstallation(installation);
           });
         }),
-        dependencies.eventDispatcher.subscribe("VoiceInstallationFailed", (event) =>
-          dependencies.eventSink.append(event)
-        ),
         dependencies.eventDispatcher.subscribe("VoiceInstallationFailed", (event) => {
           if (isSelected(event.payload.voiceId)) {
             dependencies.projectInstallation(

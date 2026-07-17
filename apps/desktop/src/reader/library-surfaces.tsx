@@ -298,6 +298,7 @@ function ActiveBookNavigation(props: ActiveBookNavigationProps) {
               }}
               type="button"
               onClick={() => props.onOpenChapter(chapter.id)}
+              title={chapter.title}
             >
               <span>
                 {index() + 1}. {chapter.title}

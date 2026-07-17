@@ -23,8 +23,7 @@ pub fn cancel_manifest_narration(request_id: String) {
 }
 use crate::storage::{
     BookExportView, BookmarkView, LibraryBookView, LibrarySearchRequest, LibrarySearchResultView,
-    ReaderDocumentView, RecordDomainEventRequest, SaveBookmarkRequest, SaveReadingPositionRequest,
-    SonelleStore,
+    ReaderDocumentView, SaveBookmarkRequest, SaveReadingPositionRequest, SonelleStore,
 };
 use crate::system_fonts::list_system_font_families;
 use crate::voice_installation::{install_voice, voice_status, NarrationVoiceInstallationStatus};
@@ -173,11 +172,6 @@ pub fn report_app_error(report: AppErrorReport) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn get_error_log_path() -> Result<String, String> {
-    error_log::path().map(|path| path.to_string_lossy().into_owned())
-}
-
-#[tauri::command]
 pub async fn save_reading_position(
     app: AppHandle,
     position: SaveReadingPositionRequest,
@@ -185,18 +179,6 @@ pub async fn save_reading_position(
     let store = managed_store(&app);
     run_blocking("reading-position.save", move || {
         store.save_reading_position(position)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn record_domain_event(
-    app: AppHandle,
-    event: RecordDomainEventRequest,
-) -> Result<(), String> {
-    let store = managed_store(&app);
-    run_blocking("domain-event.record", move || {
-        store.record_domain_event(event)
     })
     .await
 }

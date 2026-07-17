@@ -4,43 +4,16 @@ use crate::{
     epub_import::read_epub_language,
     error_log::record_native_error,
     library_import::{prepare_legacy_paragraphs, PreparedParagraphImport},
-    storage::{LegacyChapterText, LegacyLibraryRepairEvent, SonelleStore},
+    storage::{LegacyChapterText, SonelleStore},
 };
 
 const REPAIR_BATCH_SIZE: usize = 16;
 
-#[derive(Default)]
-struct RepairProgress {
-    examined_count: usize,
-    repaired_count: usize,
-    failed_count: usize,
-}
-
 pub fn migrate_legacy_library(store: &SonelleStore) -> Result<(), String> {
-    store.record_legacy_library_repair_event(LegacyLibraryRepairEvent::Started {
-        batch_size: REPAIR_BATCH_SIZE,
-    })?;
-
-    let result = repair_legacy_library(store);
-    match result {
-        Ok(progress) => {
-            store.record_legacy_library_repair_event(LegacyLibraryRepairEvent::Completed {
-                examined_count: progress.examined_count,
-                repaired_count: progress.repaired_count,
-                failed_count: progress.failed_count,
-            })
-        }
-        Err(error) => {
-            let _ = store.record_legacy_library_repair_event(LegacyLibraryRepairEvent::Failed {
-                reason: &error,
-            });
-            Err(error)
-        }
-    }
+    repair_legacy_library(store)
 }
 
-fn repair_legacy_library(store: &SonelleStore) -> Result<RepairProgress, String> {
-    let mut progress = RepairProgress::default();
+fn repair_legacy_library(store: &SonelleStore) -> Result<(), String> {
     let mut after_book_id = None;
     loop {
         let books =
@@ -50,13 +23,11 @@ fn repair_legacy_library(store: &SonelleStore) -> Result<RepairProgress, String>
         }
         for book in &books {
             after_book_id = Some(book.book_id.clone());
-            progress.examined_count += 1;
             let result = read_epub_language(Path::new(&book.source_path))
                 .ok_or_else(|| "The book language could not be recovered.".to_string())
                 .and_then(|language| store.save_book_language(&book.book_id, &language));
-            record_repair_result(&mut progress, result, "language", &book.book_id);
+            record_repair_result(result, "language", &book.book_id);
         }
-        record_progress(store, &progress)?;
         if books.len() < REPAIR_BATCH_SIZE {
             break;
         }
@@ -71,44 +42,25 @@ fn repair_legacy_library(store: &SonelleStore) -> Result<RepairProgress, String>
         }
         for chapter in &chapters {
             after_chapter_id = Some(chapter.chapter_id.clone());
-            progress.examined_count += 1;
             let paragraphs = recovered_paragraphs(chapter);
             let result =
                 store.save_recovered_paragraphs(&chapter.book_id, &chapter.chapter_id, &paragraphs);
-            record_repair_result(&mut progress, result, "paragraphs", &chapter.chapter_id);
+            record_repair_result(result, "paragraphs", &chapter.chapter_id);
         }
-        record_progress(store, &progress)?;
         if chapters.len() < REPAIR_BATCH_SIZE {
             break;
         }
     }
 
-    Ok(progress)
+    Ok(())
 }
 
-fn record_progress(store: &SonelleStore, progress: &RepairProgress) -> Result<(), String> {
-    store.record_legacy_library_repair_event(LegacyLibraryRepairEvent::Progressed {
-        examined_count: progress.examined_count,
-        repaired_count: progress.repaired_count,
-        failed_count: progress.failed_count,
-    })
-}
-
-fn record_repair_result(
-    progress: &mut RepairProgress,
-    result: Result<(), String>,
-    stage: &str,
-    entity_id: &str,
-) {
-    match result {
-        Ok(()) => progress.repaired_count += 1,
-        Err(error) => {
-            progress.failed_count += 1;
-            record_native_error(
-                "library.repair",
-                &format!("stage={stage} entity={entity_id} error={error}"),
-            );
-        }
+fn record_repair_result(result: Result<(), String>, stage: &str, entity_id: &str) {
+    if let Err(error) = result {
+        record_native_error(
+            "library.repair",
+            &format!("stage={stage} entity={entity_id} error={error}"),
+        );
     }
 }
 
@@ -205,20 +157,6 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM paragraphs", [], |row| row.get(0))
             .expect("paragraph count should read");
         assert_eq!(paragraph_count, ((REPAIR_BATCH_SIZE + 1) * 2) as i64);
-        let completion_payload: String = connection
-            .query_row(
-                "SELECT payload_json FROM domain_events
-                 WHERE name = 'LegacyLibraryRepairCompleted'
-                 ORDER BY occurred_at DESC LIMIT 1",
-                [],
-                |row| row.get(0),
-            )
-            .expect("completion event should be durable");
-        let completion: serde_json::Value =
-            serde_json::from_str(&completion_payload).expect("completion payload should parse");
-        assert_eq!(completion["repairedCount"], REPAIR_BATCH_SIZE + 1);
-        assert_eq!(completion["failedCount"], 1);
-
         fs::remove_dir_all(root).expect("repair fixture should clean up");
     }
 }

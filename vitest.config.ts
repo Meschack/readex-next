@@ -32,7 +32,6 @@ export default defineConfig({
       "@sonelle/reader": resolve(root, "packages/reader/src/index.ts"),
       "@sonelle/library": resolve(root, "packages/library/src/index.ts"),
       "@sonelle/audio": resolve(root, "packages/audio/src/index.ts"),
-      "@sonelle/storage": resolve(root, "packages/storage/src/index.ts"),
       "@sonelle/learning": resolve(root, "packages/learning/src/index.ts")
     }
   }

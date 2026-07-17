@@ -1,18 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 import { createDomainEventDispatcher, type AnyDomainEvent } from "@sonelle/domain";
 import { createReaderPreferences } from "@sonelle/reader";
-import { createReaderTypographyWorkflow } from "./reader-typography-workflow";
+import { createReaderAppearanceWorkflow } from "./reader-appearance-workflow";
 
-describe("reader typography workflow", () => {
-  it("turns one change into independent projection and preference persistence reactions", async () => {
+describe("reader appearance workflow", () => {
+  it("projects and persists highlight colors through independent event reactions", async () => {
     const eventDispatcher = createDomainEventDispatcher();
     const events: AnyDomainEvent[] = [];
-    eventDispatcher.subscribe("ReaderTypographyChanged", (event) => {
+    eventDispatcher.subscribe("ReaderAppearanceChanged", (event) => {
       events.push(event);
     });
     let preferences = createReaderPreferences();
     const save = vi.fn();
-    const workflow = createReaderTypographyWorkflow(
+    const workflow = createReaderAppearanceWorkflow(
       {
         eventDispatcher,
         repository: { save },
@@ -20,24 +20,24 @@ describe("reader typography workflow", () => {
       },
       {
         currentPreferences: () => preferences,
-        projectTypography(typography) {
-          preferences = createReaderPreferences({ ...preferences, ...typography });
+        projectAppearance(appearance) {
+          preferences = createReaderPreferences({ ...preferences, ...appearance });
         }
       }
     );
     const stop = workflow.start();
 
-    workflow.change({ contentFontFamily: "Literata" });
-    workflow.change({ uiFontFamily: "Inter" });
+    workflow.change({ narrationHighlightColor: "#cceeff" });
+    workflow.change({ bookmarkHighlightColor: "#8844aa" });
 
     await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(2));
     expect(preferences).toMatchObject({
-      contentFontFamily: "Literata",
-      uiFontFamily: "Inter"
+      narrationHighlightColor: "#cceeff",
+      bookmarkHighlightColor: "#8844aa"
     });
     expect(events.map((event) => event.name)).toEqual([
-      "ReaderTypographyChanged",
-      "ReaderTypographyChanged"
+      "ReaderAppearanceChanged",
+      "ReaderAppearanceChanged"
     ]);
 
     stop();

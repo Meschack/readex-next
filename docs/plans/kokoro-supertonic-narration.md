@@ -200,7 +200,6 @@ Event listeners independently own:
 - active-sentence and playback-state projection;
 - reading-position persistence;
 - scrolling the active sentence into view;
-- event journal persistence;
 - toast notification on failure;
 - preparing the next passage.
 

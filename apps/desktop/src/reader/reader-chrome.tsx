@@ -28,10 +28,6 @@ export function ProductBar(props: ProductBarProps) {
       </div>
       <span class="product-tagline">Your private reading desk</span>
       <div class="product-status-actions">
-        <span class="product-local-status">
-          <span aria-hidden="true" />
-          Stored locally
-        </span>
         <Show when={props.showParagraphImageAction}>
           <button
             class="product-paragraph-image-action"
@@ -213,6 +209,20 @@ export function PlaybackRail(props: PlaybackRailProps) {
         </div>
       </div>
       <div class="essential-actions">
+        <button
+          classList={{
+            "bookmark-toggle": true,
+            active: props.bookmarked
+          }}
+          type="button"
+          aria-label={props.bookmarked ? "Remove bookmark" : "Bookmark sentence"}
+          aria-pressed={props.bookmarked}
+          disabled={props.sentenceCount === 0}
+          title={props.bookmarked ? "Remove bookmark" : "Bookmark sentence"}
+          onClick={props.onToggleBookmark}
+        >
+          <BookmarkIcon />
+        </button>
         <div class="volume-control">
           <button
             classList={{ "volume-toggle": true, muted: props.volume === 0 }}
@@ -237,20 +247,6 @@ export function PlaybackRail(props: PlaybackRailProps) {
           />
           <span>{Math.round(props.volume * 100)}%</span>
         </div>
-        <button
-          classList={{
-            "bookmark-toggle": true,
-            active: props.bookmarked
-          }}
-          type="button"
-          aria-label={props.bookmarked ? "Remove bookmark" : "Bookmark sentence"}
-          aria-pressed={props.bookmarked}
-          disabled={props.sentenceCount === 0}
-          title={props.bookmarked ? "Remove bookmark" : "Bookmark sentence"}
-          onClick={props.onToggleBookmark}
-        >
-          <BookmarkIcon />
-        </button>
       </div>
     </footer>
   );

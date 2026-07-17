@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_AUDIO_SETTINGS } from "@sonelle/audio";
 import { createDomainEvent, createDomainEventDispatcher } from "@sonelle/domain";
 import { createPlaybackState, type ReaderPlaybackState } from "@sonelle/reader";
+import type { SaveReadingPositionInput } from "../library/library-contracts";
 import type { ReaderNarrationWorkflow } from "./reader-narration-workflow";
 import {
   createReaderPlaybackApplication,
@@ -104,15 +105,42 @@ describe("reader playback application", () => {
     stop();
     harness.application.dispose();
   });
+
+  it("flushes and awaits the latest reading position before stopping", async () => {
+    let finishSave: (() => void) | undefined;
+    const savePosition = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishSave = resolve;
+        })
+    );
+    const harness = createHarness({ savePosition });
+    harness.setPlayback({ activeSentenceIndex: 2, status: "playing" });
+    harness.application.positionChanged();
+
+    const stopping = harness.application.stop();
+    await vi.waitFor(() => expect(savePosition).toHaveBeenCalledOnce());
+    expect(harness.pause).not.toHaveBeenCalled();
+
+    finishSave?.();
+    await stopping;
+    expect(harness.pause).toHaveBeenCalledOnce();
+    harness.application.dispose();
+  });
 });
 
-function createHarness(options: { reactToReaderActivation?: boolean } = {}) {
+function createHarness(
+  options: {
+    reactToReaderActivation?: boolean;
+    savePosition?: (position: SaveReadingPositionInput) => Promise<void>;
+  } = {}
+) {
   let currentReader: ReaderView = { ...buildFixtureReaderView(), source: "library" };
   let currentPlayback = createPlaybackState();
   let currentSettings = DEFAULT_AUDIO_SETTINGS;
   let currentAudible = false;
   const operations: string[] = [];
-  const savePosition = vi.fn().mockResolvedValue(undefined);
+  const savePosition = vi.fn(options.savePosition ?? (() => Promise.resolve()));
   const reset = vi.fn(async () => void operations.push("reset"));
   const advanceChapter = vi.fn().mockResolvedValue(undefined);
   const dispatcher = createDomainEventDispatcher();
@@ -172,6 +200,7 @@ function createHarness(options: { reactToReaderActivation?: boolean } = {}) {
       currentPlayback = playback;
     },
     savePosition,
+    pause: narration.pause,
     reset,
     requestPlayback: narration.requestPlayback,
     operations,

@@ -1,6 +1,5 @@
 import { createDomainEvent, type DomainEvent, type DomainEventDispatcher } from "@sonelle/domain";
 import { routeNarrationEngine } from "@sonelle/audio/narration";
-import type { EventSink } from "@sonelle/storage";
 import type { AudioCacheRepository, AudioCacheStatsDto } from "../audio/audio-cache-repository";
 import type {
   EngineInstallationRepository,
@@ -68,11 +67,11 @@ interface ReaderOfflineNarrationDependencies {
   audioCache: AudioCacheRepository;
   engineInstallations: EngineInstallationRepository;
   eventDispatcher: DomainEventDispatcher;
-  eventSink: EventSink;
   narration: ReaderNarrationWorkflow;
   offlineLibrary: "individual-voice" | "language-pack";
   voiceInstallations: VoiceInstallationRepository;
   friendlyError(error: unknown): string;
+  reportPreparedAudioError?(error: unknown, bookId: string): void;
 }
 
 interface ReaderOfflineNarrationOptions {
@@ -101,7 +100,6 @@ export function createReaderOfflineNarrationApplication(
 ): ReaderOfflineNarrationApplication {
   const voiceWorkflow = createReaderVoiceInstallationWorkflow({
     eventDispatcher: dependencies.eventDispatcher,
-    eventSink: dependencies.eventSink,
     repository: dependencies.voiceInstallations,
     selectedVoiceId: options.selectedVoiceId,
     projectInstallation: options.projectVoiceInstallation,
@@ -110,7 +108,6 @@ export function createReaderOfflineNarrationApplication(
   });
   const engineWorkflow = createReaderEngineInstallationWorkflow({
     eventDispatcher: dependencies.eventDispatcher,
-    eventSink: dependencies.eventSink,
     repository: dependencies.engineInstallations,
     projectInstallation: (installation) => {
       options.projectEngineInstallation(installation);
@@ -120,16 +117,21 @@ export function createReaderOfflineNarrationApplication(
     friendlyError: dependencies.friendlyError
   });
 
-  const refreshPreparedAudio = async (bookId = options.currentBookId()) => {
+  const refreshPreparedAudioForBook = async (bookId: string) => {
     try {
       const stats = await dependencies.audioCache.getStats(bookId);
       if (bookId === options.currentBookId()) {
         options.projectAudioCache(stats);
+        options.projectAudioCacheNotice(null);
       }
     } catch (error) {
-      options.projectAudioCacheNotice(dependencies.friendlyError(error));
+      dependencies.reportPreparedAudioError?.(error, bookId);
+      if (bookId === options.currentBookId()) {
+        options.projectAudioCacheNotice(dependencies.friendlyError(error));
+      }
     }
   };
+  const refreshPreparedAudio = () => refreshPreparedAudioForBook(options.currentBookId());
 
   const refreshNarrationFiles = () =>
     Promise.all(narrationEngineIds.map((engineId) => engineWorkflow.refresh(engineId))).then(
@@ -161,15 +163,9 @@ export function createReaderOfflineNarrationApplication(
             return voiceWorkflow.refresh(event.payload.settings.voiceId);
           }
         }),
-        dependencies.eventDispatcher.subscribe("PreparedNarrationClearingRequested", (event) =>
-          dependencies.eventSink.append(event)
-        ),
         dependencies.eventDispatcher.subscribe(
           "PreparedNarrationClearingRequested",
           handleClearRequested
-        ),
-        dependencies.eventDispatcher.subscribe("PreparedNarrationCleared", (event) =>
-          dependencies.eventSink.append(event)
         ),
         dependencies.eventDispatcher.subscribe("PreparedNarrationCleared", (event) => {
           if (event.payload.bookId === options.currentBookId()) {
@@ -177,16 +173,13 @@ export function createReaderOfflineNarrationApplication(
             options.projectAudioCacheNotice("Prepared audio cleared for this book.");
           }
         }),
-        dependencies.eventDispatcher.subscribe("PreparedNarrationClearingFailed", (event) =>
-          dependencies.eventSink.append(event)
-        ),
         dependencies.eventDispatcher.subscribe("PreparedNarrationClearingFailed", (event) => {
           if (event.payload.bookId === options.currentBookId()) {
             options.projectAudioCacheNotice(event.payload.reason);
           }
         }),
         dependencies.eventDispatcher.subscribe("ReaderOpened", (event) => {
-          void refreshPreparedAudio(event.payload.bookId);
+          void refreshPreparedAudioForBook(event.payload.bookId);
         })
       ];
       await refreshPreparedAudio();

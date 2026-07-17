@@ -95,6 +95,15 @@ interface FreeDictionaryApiSense {
   antonyms?: unknown;
 }
 
+interface FrenchWiktionaryApiResponse {
+  parse?: unknown;
+}
+
+interface FrenchWiktionaryParseResult {
+  title?: unknown;
+  text?: unknown;
+}
+
 export function createSavedDictionary(
   entries: Record<string, SavedDictionaryEntry> = {}
 ): SavedDictionary {
@@ -239,6 +248,50 @@ export function parseFreeDictionaryApiResponse(
   return firstWithDefinitions?.entry ?? null;
 }
 
+export function parseFrenchWiktionaryApiResponse(
+  surface: string,
+  payload: unknown,
+  fetchedAt = new Date().toISOString()
+): DictionaryEntry | null {
+  if (payload == null || typeof payload !== "object" || typeof DOMParser === "undefined") {
+    return null;
+  }
+
+  const response = payload as FrenchWiktionaryApiResponse;
+  if (response.parse == null || typeof response.parse !== "object") return null;
+
+  const parsed = response.parse as FrenchWiktionaryParseResult;
+  const html = readString(parsed.text);
+  const key = normalizeInsightKey(surface);
+  if (html == null || key.length === 0) return null;
+
+  const document = new DOMParser().parseFromString(html, "text/html");
+  const languageHeading = document.querySelector(".sectionlangue#fr")?.closest(".mw-heading2");
+  if (languageHeading == null) return null;
+
+  const languageNodes = collectLanguageSection(languageHeading);
+  const meanings = languageNodes
+    .map((node, index) => parseFrenchMeaning(languageNodes, node, index))
+    .filter((meaning): meaning is DictionaryMeaning => meaning != null);
+  if (meanings.length === 0) return null;
+
+  const title = readString(parsed.title) ?? surface;
+  const phonetic = languageNodes
+    .map((node) => readString(node.querySelector('[title="Prononciation API"]')?.textContent))
+    .find((value): value is string => value != null);
+
+  return {
+    key,
+    surface,
+    word: title,
+    phonetic: normalizeFrenchPhonetic(phonetic ?? null),
+    audioUrl: null,
+    meanings,
+    sourceUrl: `https://fr.wiktionary.org/wiki/${encodeURIComponent(title)}`,
+    fetchedAt
+  };
+}
+
 export function serializeSavedDictionary(savedDictionary: SavedDictionary): string {
   return JSON.stringify({ entries: savedDictionary.entries });
 }
@@ -365,6 +418,81 @@ function parseFreeMeaning(item: unknown, partOfSpeech: string): DictionaryMeanin
       }
     ]
   };
+}
+
+function collectLanguageSection(languageHeading: Element): Element[] {
+  const nodes: Element[] = [];
+  let node = languageHeading.nextElementSibling;
+
+  while (node != null && !node.matches(".mw-heading2")) {
+    nodes.push(node);
+    node = node.nextElementSibling;
+  }
+
+  return nodes;
+}
+
+function parseFrenchMeaning(
+  languageNodes: Element[],
+  node: Element,
+  nodeIndex: number
+): DictionaryMeaning | null {
+  const partOfSpeech = readString(node.querySelector(".titredef")?.textContent);
+  if (!node.matches(".mw-heading3") || partOfSpeech == null) return null;
+
+  const definitionList = findFrenchDefinitionList(languageNodes, nodeIndex + 1);
+  if (definitionList == null) return null;
+
+  const definitions = Array.from(definitionList.children)
+    .filter((candidate) => candidate.tagName === "LI")
+    .map(parseFrenchDefinition)
+    .filter((definition): definition is DictionaryDefinition => definition != null);
+
+  return definitions.length > 0 ? { partOfSpeech, definitions } : null;
+}
+
+function findFrenchDefinitionList(languageNodes: Element[], startIndex: number): Element | null {
+  for (let index = startIndex; index < languageNodes.length; index += 1) {
+    const candidate = languageNodes[index];
+    if (candidate.matches(".mw-heading2, .mw-heading3")) return null;
+
+    const list = candidate.matches("ol") ? candidate : candidate.querySelector(":scope > ol");
+    if (list != null) return list;
+  }
+
+  return null;
+}
+
+function parseFrenchDefinition(item: Element): DictionaryDefinition | null {
+  const definitionNode = item.cloneNode(true) as Element;
+  definitionNode
+    .querySelectorAll("ul, ol, dl, sup, .reference, .mw-editsection")
+    .forEach((node) => node.remove());
+  const definition = normalizeHtmlText(definitionNode.textContent);
+  if (definition == null) return null;
+
+  const example = normalizeHtmlText(
+    item.querySelector(".example q")?.textContent ?? item.querySelector(".example")?.textContent
+  );
+
+  return {
+    definition,
+    example,
+    synonyms: [],
+    antonyms: []
+  };
+}
+
+function normalizeFrenchPhonetic(value: string | null): string | null {
+  if (value == null) return null;
+  if (value.startsWith("\\") && value.endsWith("\\")) {
+    return `/${value.slice(1, -1)}/`;
+  }
+  return value;
+}
+
+function normalizeHtmlText(value: string | null | undefined): string | null {
+  return readString(value?.replace(/\s+/gu, " "));
 }
 
 function readLanguageCode(value: unknown): string | null {

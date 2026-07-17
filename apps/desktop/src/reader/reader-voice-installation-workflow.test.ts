@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import { createDomainEventDispatcher, type AnyDomainEvent } from "@sonelle/domain";
-import type { EventSink } from "@sonelle/storage";
 import type {
   VoiceInstallationRepository,
   VoiceInstallationState
@@ -17,7 +16,7 @@ const readyInstallation: VoiceInstallationState = {
 };
 
 describe("reader voice installation workflow", () => {
-  it("turns one request into a persisted ready lifecycle", async () => {
+  it("turns one request into a published ready lifecycle", async () => {
     const harness = createHarness({ result: readyInstallation });
     const stop = await harness.workflow.start();
 
@@ -52,7 +51,7 @@ describe("reader voice installation workflow", () => {
     stop();
   });
 
-  it("projects transient native progress without journaling it", async () => {
+  it("projects transient native progress without publishing a lifecycle event", async () => {
     const harness = createHarness({ result: readyInstallation });
     const stop = await harness.workflow.start();
 
@@ -74,11 +73,17 @@ describe("reader voice installation workflow", () => {
 function createHarness(outcome: { result: VoiceInstallationState } | { error: Error }) {
   const dispatcher = createDomainEventDispatcher();
   const events: AnyDomainEvent[] = [];
+  for (const name of [
+    "VoiceInstallationRequested",
+    "VoiceInstallationReady",
+    "VoiceInstallationFailed"
+  ] as const) {
+    dispatcher.subscribe(name, (event) => {
+      events.push(event as AnyDomainEvent);
+    });
+  }
   const states: VoiceInstallationState[] = [];
   const notices: Array<string | null> = [];
-  const eventSink: EventSink = {
-    append: async (event) => void events.push(event as AnyDomainEvent)
-  };
   const install = vi.fn(async () => {
     if ("error" in outcome) throw outcome.error;
     return outcome.result;
@@ -94,7 +99,6 @@ function createHarness(outcome: { result: VoiceInstallationState } | { error: Er
   };
   const workflow = createReaderVoiceInstallationWorkflow({
     eventDispatcher: dispatcher,
-    eventSink,
     repository,
     selectedVoiceId: () => "en_US-amy-medium",
     projectInstallation: (state) => states.push(state),

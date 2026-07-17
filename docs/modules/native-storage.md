@@ -4,7 +4,6 @@
 
 - SQLite schema, migrations, transactions, and durable library projections
 - local cover assets and reading-data queries
-- transactional persistence of native library domain events
 
 ## Refuses To Own
 
@@ -14,24 +13,25 @@
 ## Interface
 
 `SonelleStore` exposes library use cases to thin Tauri commands. Transport models live in
-`storage/model.rs`; event persistence lives in `storage/event_journal.rs`.
+`storage/model.rs`. Domain event dispatch stays outside native storage.
 
 The `.readex` application-data directory is retained as an intentional compatibility path for
 existing local libraries. New user-facing naming remains Sonelle.
 
 ## Domain Events
 
-Imports, reading-position changes, bookmark mutations, exports, and legacy repair are appended in
-the same native workflow as their projection update. Repair progress is batched and never blocks app
-startup.
+Native storage does not journal domain events. Application workflows publish events through the
+in-process dispatcher after their core storage operation succeeds.
 
 ## Invariants
 
-- a durable projection and its domain event commit in the same SQLite transaction
-- renderer-originated durable events must be explicitly admitted by the native event allowlist
+- durable product state is stored in purpose-built tables rather than reconstructed from events
+- library projections expose reading progress as a cumulative completed-sentence count across the
+  book, derived from the active chapter position and bounded by the book's sentence count
+- initialization removes the discontinued `domain_events` table from existing libraries
 - migrations preserve existing local libraries, including the intentional `.readex` compatibility path
 
 ## Tests
 
 Rust tests use temporary SQLite databases and exercise the public store behavior, migrations,
-search, bookmarks, exports, and event persistence.
+search, bookmarks, exports, cumulative cross-chapter progress, and removal of legacy event history.

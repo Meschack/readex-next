@@ -25,11 +25,18 @@ export interface ReaderPreferences {
   contentFontSize: number;
   contentFontFamily: string | null;
   uiFontFamily: string | null;
+  narrationHighlightColor: string;
+  bookmarkHighlightColor: string;
 }
 
 export type ReaderTypographyPreferences = Pick<
   ReaderPreferences,
   "contentFontSize" | "contentFontFamily" | "uiFontFamily"
+>;
+
+export type ReaderAppearancePreferences = Pick<
+  ReaderPreferences,
+  "narrationHighlightColor" | "bookmarkHighlightColor"
 >;
 
 export interface SearchableSentence {
@@ -112,6 +119,9 @@ export function createPlaybackState(): ReaderPlaybackState {
   };
 }
 
+export const DEFAULT_NARRATION_HIGHLIGHT_COLOR = "#f5edb8";
+export const DEFAULT_BOOKMARK_HIGHLIGHT_COLOR = "#016630";
+
 export const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
   toolTab: "word",
   libraryFilter: "all",
@@ -119,7 +129,9 @@ export const DEFAULT_READER_PREFERENCES: ReaderPreferences = {
   inspectorRailWidth: 400,
   contentFontSize: 16,
   contentFontFamily: null,
-  uiFontFamily: null
+  uiFontFamily: null,
+  narrationHighlightColor: DEFAULT_NARRATION_HIGHLIGHT_COLOR,
+  bookmarkHighlightColor: DEFAULT_BOOKMARK_HIGHLIGHT_COLOR
 };
 
 export function createReaderPreferences(input: Partial<ReaderPreferences> = {}): ReaderPreferences {
@@ -140,13 +152,26 @@ export function createReaderPreferences(input: Partial<ReaderPreferences> = {}):
       input.contentFontSize ?? DEFAULT_READER_PREFERENCES.contentFontSize
     ),
     contentFontFamily: normalizeFontFamily(input.contentFontFamily),
-    uiFontFamily: normalizeFontFamily(input.uiFontFamily)
+    uiFontFamily: normalizeFontFamily(input.uiFontFamily),
+    narrationHighlightColor: normalizeHighlightColor(
+      input.narrationHighlightColor,
+      DEFAULT_NARRATION_HIGHLIGHT_COLOR
+    ),
+    bookmarkHighlightColor: normalizeHighlightColor(
+      input.bookmarkHighlightColor,
+      DEFAULT_BOOKMARK_HIGHLIGHT_COLOR
+    )
   };
 }
 
 function normalizeRailWidth(value: number | undefined, fallback: number): number {
   if (value == null || !Number.isFinite(value)) return fallback;
   return Math.min(600, Math.max(180, Math.round(value)));
+}
+
+function normalizeHighlightColor(value: string | undefined, fallback: string): string {
+  if (typeof value !== "string" || !/^#[\da-f]{6}$/iu.test(value)) return fallback;
+  return value.toLowerCase();
 }
 
 export function serializeReaderPreferences(preferences: ReaderPreferences): string {
@@ -172,6 +197,31 @@ export function readerTypographyPreferences(
     contentFontFamily: normalized.contentFontFamily,
     uiFontFamily: normalized.uiFontFamily
   };
+}
+
+export function readerAppearancePreferences(
+  preferences: ReaderPreferences
+): ReaderAppearancePreferences {
+  const normalized = createReaderPreferences(preferences);
+  return {
+    narrationHighlightColor: normalized.narrationHighlightColor,
+    bookmarkHighlightColor: normalized.bookmarkHighlightColor
+  };
+}
+
+export function readableInkForColor(color: string): "#242625" | "#ffffff" {
+  const normalized = normalizeHighlightColor(color, DEFAULT_NARRATION_HIGHLIGHT_COLOR);
+  const channels = [1, 3, 5].map((offset) =>
+    Number.parseInt(normalized.slice(offset, offset + 2), 16)
+  );
+  const luminance = channels
+    .map((channel) => channel / 255)
+    .map((channel) => (channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4))
+    .reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index], 0);
+  const darkInkLuminance = 0.019;
+  const whiteContrast = 1.05 / (luminance + 0.05);
+  const darkContrast = (luminance + 0.05) / (darkInkLuminance + 0.05);
+  return whiteContrast > darkContrast ? "#ffffff" : "#242625";
 }
 
 export function playPlayback(

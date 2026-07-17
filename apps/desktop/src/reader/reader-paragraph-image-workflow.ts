@@ -1,5 +1,4 @@
 import { createDomainEvent, type DomainEvent, type DomainEventDispatcher } from "@sonelle/domain";
-import type { EventSink } from "@sonelle/storage";
 import type { ParagraphImageExporter } from "./reader-paragraph-image";
 import { paragraphAtSentenceIndex, type ReaderView } from "./reader-view";
 
@@ -11,7 +10,6 @@ export interface ParagraphImageNotice {
 
 interface ReaderParagraphImageWorkflowDependencies {
   eventDispatcher: DomainEventDispatcher;
-  eventSink: EventSink;
   exporter: ParagraphImageExporter;
   onError?(error: unknown): void;
 }
@@ -103,9 +101,6 @@ export function createReaderParagraphImageWorkflow(
     },
     start() {
       const subscriptions = [
-        dependencies.eventDispatcher.subscribe("ParagraphImageRequested", (event) =>
-          dependencies.eventSink.append(event)
-        ),
         dependencies.eventDispatcher.subscribe("ParagraphImageRequested", () => {
           options.projectNotice({
             title: "Creating paragraph image",
@@ -114,9 +109,6 @@ export function createReaderParagraphImageWorkflow(
           });
         }),
         dependencies.eventDispatcher.subscribe("ParagraphImageRequested", createImage),
-        dependencies.eventDispatcher.subscribe("ParagraphImageCreated", (event) =>
-          dependencies.eventSink.append(event)
-        ),
         dependencies.eventDispatcher.subscribe("ParagraphImageCreated", (event) => {
           options.projectNotice({
             title: "Paragraph image ready",
@@ -124,9 +116,6 @@ export function createReaderParagraphImageWorkflow(
             tone: "success"
           });
         }),
-        dependencies.eventDispatcher.subscribe("ParagraphImageFailed", (event) =>
-          dependencies.eventSink.append(event)
-        ),
         dependencies.eventDispatcher.subscribe("ParagraphImageFailed", (event) => {
           options.projectNotice({
             title: "Paragraph image needs attention",

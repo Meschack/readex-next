@@ -11,9 +11,22 @@ import type { ReaderNarrationPrefetchWorkflow } from "./reader-narration-prefetc
 import { createReaderNarrationWorkflow } from "./reader-narration-workflow";
 
 describe("reader narration workflow", () => {
-  it("runs playback and persists lifecycle facts through one application interface", async () => {
+  it("runs playback and publishes lifecycle facts through one application interface", async () => {
     const dispatcher = createDomainEventDispatcher();
-    const persisted: AnyDomainEvent[] = [];
+    const events: AnyDomainEvent[] = [];
+    for (const name of [
+      "NarrationPlaybackRequested",
+      "NarrationPreparationStarted",
+      "PassageNarrationReady",
+      "NarrationSentenceEntered",
+      "PassageNarrationPlaybackEnded",
+      "NarrationPlaybackEnded",
+      "NarrationResetRequested"
+    ] as const) {
+      dispatcher.subscribe(name, (event) => {
+        events.push(event as AnyDomainEvent);
+      });
+    }
     const projections: string[] = [];
     const reader = buildFixtureReaderView();
     const session = fakeSession(async (sentenceId) => {
@@ -58,7 +71,6 @@ describe("reader narration workflow", () => {
     const workflow = createReaderNarrationWorkflow(
       {
         eventDispatcher: dispatcher,
-        eventSink: { append: async (event) => void persisted.push(event as AnyDomainEvent) },
         prefetchWorkflow: prefetch,
         routingMode: "hybrid-v1",
         session
@@ -79,9 +91,9 @@ describe("reader narration workflow", () => {
     workflow.requestPlayback(reader.sentences[0].id);
     await vi.waitFor(() => expect(session.play).toHaveBeenCalledOnce());
     await vi.waitFor(() => expect(projections).toContain("NarrationPlaybackEnded"));
-    await vi.waitFor(() => expect(persisted).toHaveLength(6));
+    await vi.waitFor(() => expect(events).toHaveLength(6));
 
-    expect(persisted.map((event) => event.name)).toEqual([
+    expect(events.map((event) => event.name)).toEqual([
       "NarrationPlaybackRequested",
       "NarrationPreparationStarted",
       "PassageNarrationReady",
@@ -91,79 +103,13 @@ describe("reader narration workflow", () => {
     ]);
     expect(session.open).toHaveBeenCalledOnce();
     await workflow.reset();
-    await vi.waitFor(() =>
-      expect(persisted[persisted.length - 1]?.name).toBe("NarrationResetRequested")
-    );
+    await vi.waitFor(() => expect(events[events.length - 1]?.name).toBe("NarrationResetRequested"));
     expect(prefetch.reset).toHaveBeenCalledOnce();
     expect(session.close).toHaveBeenCalledOnce();
     expect(projectPreparing).toHaveBeenLastCalledWith(false);
     expect(projectAudible).toHaveBeenLastCalledWith(false);
     stop();
     expect(session.close).toHaveBeenCalledTimes(2);
-  });
-
-  it("starts ready narration without waiting for the event journal", async () => {
-    const dispatcher = createDomainEventDispatcher();
-    const reader = buildFixtureReaderView();
-    let releaseFirstAppend: () => void = () => {};
-    const firstAppendBlocked = new Promise<void>((resolve) => {
-      releaseFirstAppend = () => resolve();
-    });
-    const append = vi
-      .fn<(event: AnyDomainEvent) => Promise<void>>()
-      .mockImplementationOnce(() => firstAppendBlocked)
-      .mockResolvedValue(undefined);
-    const projectPreparing = vi.fn();
-    const session = fakeSession(async (sentenceId) => {
-      const base = {
-        bookId: reader.book.id,
-        chapterId: reader.chapter.id,
-        sentenceId,
-        passageId: `${reader.chapter.id}:passage-1`
-      };
-      await dispatcher.dispatch(createDomainEvent("NarrationPreparationStarted", base));
-      await dispatcher.dispatch(
-        createDomainEvent("PassageNarrationReady", {
-          ...base,
-          firstSentenceId: sentenceId,
-          lastSentenceId: sentenceId,
-          voiceId: "kokoro:af-heart",
-          engineId: "kokoro",
-          source: "prepared"
-        })
-      );
-      await dispatcher.dispatch(createDomainEvent("NarrationSentenceEntered", base));
-    });
-    const workflow = createReaderNarrationWorkflow(
-      {
-        eventDispatcher: dispatcher,
-        eventSink: { append: (event) => append(event as AnyDomainEvent) },
-        prefetchWorkflow: fakePrefetchWorkflow(),
-        routingMode: "hybrid-v1",
-        session
-      },
-      {
-        currentReader: () => reader,
-        currentSettings: settings,
-        engineInstallations: () => ({ kokoro: { modelRevision: "kokoro-test" } }),
-        projectPlayback: vi.fn(),
-        projectPreparing,
-        projectAudible: vi.fn(),
-        projectNotice: vi.fn(),
-        reportError: vi.fn()
-      }
-    );
-    const stop = workflow.start();
-
-    workflow.requestPlayback(reader.sentences[0].id);
-
-    await vi.waitFor(() => expect(session.play).toHaveBeenCalledOnce());
-    await vi.waitFor(() => expect(projectPreparing).toHaveBeenLastCalledWith(false));
-    expect(append).toHaveBeenCalledTimes(1);
-
-    releaseFirstAppend();
-    await vi.waitFor(() => expect(append.mock.calls.length).toBeGreaterThanOrEqual(4));
-    stop();
   });
 
   it.each([
@@ -178,7 +124,6 @@ describe("reader narration workflow", () => {
     const workflow = createReaderNarrationWorkflow(
       {
         eventDispatcher: dispatcher,
-        eventSink: { append: vi.fn(async () => undefined) },
         prefetchWorkflow: fakePrefetchWorkflow(),
         routingMode: "hybrid-v1",
         session: fakeSession(async () => undefined)

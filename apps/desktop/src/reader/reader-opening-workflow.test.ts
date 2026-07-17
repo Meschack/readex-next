@@ -7,6 +7,9 @@ describe("reader opening workflow", () => {
   it("publishes one fact and lets opening consequences react independently", async () => {
     const dispatcher = createDomainEventDispatcher();
     const events: AnyDomainEvent[] = [];
+    dispatcher.subscribe("ReaderOpened", (event) => {
+      events.push(event);
+    });
     let finishActivation = () => {};
     const activate = vi.fn(
       () =>
@@ -20,7 +23,6 @@ describe("reader opening workflow", () => {
     const workflow = createReaderOpeningWorkflow(
       {
         eventDispatcher: dispatcher,
-        eventSink: { append: async (event) => void events.push(event as AnyDomainEvent) },
         playback: { activate },
         reportEventError: vi.fn()
       },

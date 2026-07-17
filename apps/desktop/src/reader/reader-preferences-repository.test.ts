@@ -34,13 +34,20 @@ describe("reader preferences repository", () => {
       createReaderPreferences({
         ...firstSession.load(),
         libraryRailWidth: 372,
-        inspectorRailWidth: 432
+        inspectorRailWidth: 432,
+        narrationHighlightColor: "#aaccee",
+        bookmarkHighlightColor: "#016630"
       })
     );
     const reopenedSession = createReaderPreferencesRepository();
 
     expect(reopenedSession.load()).toEqual(
-      expect.objectContaining({ libraryRailWidth: 372, inspectorRailWidth: 432 })
+      expect.objectContaining({
+        libraryRailWidth: 372,
+        inspectorRailWidth: 432,
+        narrationHighlightColor: "#aaccee",
+        bookmarkHighlightColor: "#016630"
+      })
     );
   });
 });

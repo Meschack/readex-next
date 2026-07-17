@@ -1,5 +1,4 @@
 import { createDomainEvent, type DomainEvent, type DomainEventDispatcher } from "@sonelle/domain";
-import type { EventSink } from "@sonelle/storage";
 import {
   failedEngineInstallation,
   type EngineInstallationRepository,
@@ -10,7 +9,6 @@ import { reportAppError } from "../platform/error-reporting";
 
 interface ReaderEngineInstallationWorkflowDependencies {
   eventDispatcher: DomainEventDispatcher;
-  eventSink: EventSink;
   repository: EngineInstallationRepository;
   projectInstallation(state: EngineInstallationState): void;
   projectNotice(message: string | null): void;
@@ -81,10 +79,6 @@ export function createReaderEngineInstallationWorkflow(
       const subscriptions = [
         dependencies.eventDispatcher.subscribe(
           "OfflineNarrationFilesInstallationRequested",
-          (event) => dependencies.eventSink.append(event)
-        ),
-        dependencies.eventDispatcher.subscribe(
-          "OfflineNarrationFilesInstallationRequested",
           (event) => {
             const engineId = event.payload.engineId as NarrationEngineId;
             dependencies.projectInstallation(preparingEngineInstallation(engineId));
@@ -103,9 +97,6 @@ export function createReaderEngineInstallationWorkflow(
               engineId: event.payload.engineId as NarrationEngineId
             })
         ),
-        dependencies.eventDispatcher.subscribe("OfflineNarrationFilesInstallationReady", (event) =>
-          dependencies.eventSink.append(event)
-        ),
         dependencies.eventDispatcher.subscribe(
           "OfflineNarrationFilesInstallationReady",
           (event) => {
@@ -115,9 +106,6 @@ export function createReaderEngineInstallationWorkflow(
               .getStatus(engineId)
               .then(dependencies.projectInstallation);
           }
-        ),
-        dependencies.eventDispatcher.subscribe("OfflineNarrationFilesInstallationFailed", (event) =>
-          dependencies.eventSink.append(event)
         ),
         dependencies.eventDispatcher.subscribe(
           "OfflineNarrationFilesInstallationFailed",

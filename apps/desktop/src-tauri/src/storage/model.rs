@@ -1,14 +1,4 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RecordDomainEventRequest {
-    pub id: String,
-    pub name: String,
-    pub occurred_at: String,
-    pub payload: Value,
-}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,7 +11,7 @@ pub struct LibraryBookView {
     pub chapter_count: i64,
     pub sentence_count: i64,
     pub last_chapter_id: Option<String>,
-    pub last_sentence_index: i64,
+    pub completed_sentence_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]

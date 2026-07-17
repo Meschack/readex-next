@@ -13,6 +13,7 @@ import {
   parseReaderPreferences,
   playPlayback,
   projectNarrationEventToPlayback,
+  readableInkForColor,
   searchReaderSentences,
   selectPlaybackSentence,
   serializeReaderPreferences,
@@ -326,7 +327,9 @@ describe("reader preferences", () => {
         inspectorRailWidth: 418.7,
         contentFontSize: 19,
         contentFontFamily: "Literata",
-        uiFontFamily: "Inter"
+        uiFontFamily: "Inter",
+        narrationHighlightColor: "#ABCDEF",
+        bookmarkHighlightColor: "#016630"
       })
     ).toEqual({
       toolTab: "settings",
@@ -335,7 +338,9 @@ describe("reader preferences", () => {
       inspectorRailWidth: 419,
       contentFontSize: 19,
       contentFontFamily: "Literata",
-      uiFontFamily: "Inter"
+      uiFontFamily: "Inter",
+      narrationHighlightColor: "#abcdef",
+      bookmarkHighlightColor: "#016630"
     });
     expect(
       parseReaderPreferences(
@@ -352,7 +357,9 @@ describe("reader preferences", () => {
       inspectorRailWidth: 400,
       contentFontSize: 24,
       contentFontFamily: null,
-      uiFontFamily: null
+      uiFontFamily: null,
+      narrationHighlightColor: "#f5edb8",
+      bookmarkHighlightColor: "#016630"
     });
     expect(
       parseReaderPreferences(
@@ -363,7 +370,9 @@ describe("reader preferences", () => {
           inspectorRailWidth: 425,
           contentFontSize: 13,
           contentFontFamily: "  Source Serif 4  ",
-          uiFontFamily: "Bad\nFont"
+          uiFontFamily: "Bad\nFont",
+          narrationHighlightColor: "not-a-color",
+          bookmarkHighlightColor: "#FF0066"
         })
       )
     ).toEqual({
@@ -373,8 +382,15 @@ describe("reader preferences", () => {
       inspectorRailWidth: 425,
       contentFontSize: 14,
       contentFontFamily: "Source Serif 4",
-      uiFontFamily: null
+      uiFontFamily: null,
+      narrationHighlightColor: "#f5edb8",
+      bookmarkHighlightColor: "#ff0066"
     });
+  });
+
+  it("chooses readable text for light and dark reader highlights", () => {
+    expect(readableInkForColor("#f5edb8")).toBe("#242625");
+    expect(readableInkForColor("#016630")).toBe("#ffffff");
   });
 });
 

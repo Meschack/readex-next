@@ -9,7 +9,7 @@ export type LibraryBookFilter = "all" | "in-progress" | "bookmarked";
 
 export interface LibraryBookSearchTarget extends BookRef {
   lastChapterId: string | null;
-  lastSentenceIndex: number;
+  completedSentenceCount: number;
 }
 
 export interface FilterLibraryBooksInput<TBook extends LibraryBookSearchTarget> {
@@ -60,7 +60,7 @@ export function filterLibraryBooks<TBook extends LibraryBookSearchTarget>({
 }
 
 export function isBookInProgress(book: LibraryBookSearchTarget): boolean {
-  return book.lastChapterId != null || book.lastSentenceIndex > 0;
+  return book.lastChapterId != null || book.completedSentenceCount > 0;
 }
 
 export function normalizeLibraryQuery(query: string): string {

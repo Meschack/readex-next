@@ -46,7 +46,6 @@ pub fn run() {
 
     builder
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             error_log::initialize(app.handle()).map_err(io::Error::other)?;
             let store = SonelleStore::open(app.handle()).map_err(|error| {
@@ -88,8 +87,6 @@ pub fn run() {
             commands::open_book,
             commands::prepare_manifest_narration,
             commands::prepare_sentence_audio,
-            commands::record_domain_event,
-            commands::get_error_log_path,
             commands::report_app_error,
             commands::play_sentence_audio,
             commands::save_bookmark,

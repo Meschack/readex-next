@@ -20,15 +20,15 @@ runtime task, reads legacy rows in bounded keyset batches, and isolates individu
 
 ## Domain Events
 
-Import uses requested, cancelled, imported, and failed facts. Native transactions persist
-`BookImported`, `BookTextExtracted`, and `ChapterSegmented` with their projections. Legacy repair
-persists started, progressed, completed, and failed events, plus recovered language and paragraph
-facts.
+Import dispatches requested, cancelled, imported, and failed facts through the application
+dispatcher. Native storage persists the resulting book, chapter, sentence, and paragraph
+projections without maintaining a separate event history. Legacy repair logs failures to local
+diagnostics and updates missing projections directly.
 
 ## Invariants
 
 - library ports never import reader-owned DTOs
-- imported projections and their durable facts commit atomically
+- imported projections commit atomically
 - repair never blocks Tauri setup and one unreadable book does not stop later repairs
 - batches remain bounded and resumable by stable identifiers
 

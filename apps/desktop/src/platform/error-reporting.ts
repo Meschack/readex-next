@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { isTauriRuntime } from "./tauri-runtime";
 
 const originalConsoleError = console.error.bind(console);
@@ -40,16 +39,6 @@ export async function reportAppError(scope: string, error: unknown, details: unk
   const report = createAppErrorReport(scope, error, details);
   originalConsoleError(`[sonelle][${report.scope}] ${report.message}`, error, ...details);
   await persistReport(report);
-}
-
-export async function getErrorLogPath(): Promise<string | null> {
-  if (!isTauriRuntime()) return null;
-  return invoke<string>("get_error_log_path");
-}
-
-export async function revealErrorLog(path: string): Promise<void> {
-  if (!isTauriRuntime()) return;
-  await revealItemInDir(path);
 }
 
 export function createAppErrorReport(

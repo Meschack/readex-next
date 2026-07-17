@@ -72,10 +72,15 @@ export function createReaderPlaybackApplication(
   dependencies: ReaderPlaybackApplicationDependencies,
   options: ReaderPlaybackApplicationOptions
 ): ReaderPlaybackApplication {
+  let positionSaveSettled = Promise.resolve();
   const positionScheduler = createReadingPositionScheduler<SaveReadingPositionInput>({
     delayMs: 2_500,
-    save: (position) => dependencies.positions.save(position),
-    onError: options.reportPositionError
+    save(position) {
+      positionSaveSettled = positionSaveSettled
+        .then(() => dependencies.positions.save(position))
+        .catch(() => options.reportPositionError());
+      return positionSaveSettled;
+    }
   });
   let nextPositionSaveIntent: PositionSaveIntent | null = null;
   let sessionProjectedPlaybackChange = false;
@@ -249,6 +254,7 @@ export function createReaderPlaybackApplication(
         nextReader.source !== previousReader.source;
       if (switchingBooks) dependencies.settings.activate(nextReader.book.language);
       positionScheduler.flush();
+      await positionSaveSettled;
       nextPositionSaveIntent = "immediate";
       options.clearSentenceElements();
       await dependencies.narration.reset().catch(dependencies.reportEventError);
@@ -287,6 +293,8 @@ export function createReaderPlaybackApplication(
     },
     async stop() {
       cancelChapterTransition();
+      positionScheduler.flush();
+      await positionSaveSettled;
       await dependencies.narration.pause().catch(dependencies.reportEventError);
       options.projectAudible(false);
       options.projectPlayback(pausePlayback);

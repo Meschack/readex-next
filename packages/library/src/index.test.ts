@@ -17,14 +17,14 @@ const books: LibraryBookSearchTarget[] = [
     title: "The Listening Margin",
     author: "Mara Vale",
     lastChapterId: "chapter-1",
-    lastSentenceIndex: 4
+    completedSentenceCount: 5
   },
   {
     id: "book-2",
     title: "Quiet Syntax",
     author: "Iris Reed",
     lastChapterId: null,
-    lastSentenceIndex: 0
+    completedSentenceCount: 0
   }
 ];
 

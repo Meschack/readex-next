@@ -23,14 +23,14 @@ message, optional stack and bounded diagnostic details, app version, build kind,
 process ID. The logger deliberately avoids serializing nested application state so book contents do
 not accidentally become diagnostics.
 
-The Settings panel exposes the resolved file and can reveal it in the operating system's file
-manager. User-facing notifications remain concise; `error.json` carries the technical detail.
+The resolved file path is printed to the development terminal during startup. The reader UI does
+not expose a diagnostics panel; user-facing notifications remain concise while `error.json` carries
+the technical detail.
 
 ## Ownership
 
 - `src-tauri/src/error_log.rs` owns the persistent JSON document and native panic reporting.
 - `src/platform/error-reporting.ts` owns webview capture, normalization, and the reporting command.
-- Settings only displays and reveals the resolved path.
 
 The diagnostics module does not own toast copy, recovery policy, analytics, remote telemetry, or
 book data. No diagnostic is uploaded.
@@ -38,7 +38,6 @@ book data. No diagnostic is uploaded.
 ## Interface
 
 - `report_app_error(report)` appends a webview error.
-- `get_error_log_path()` returns the platform-resolved file path.
 - `record_native_error(scope, message)` records native failures and mirrors them to stderr.
 - `installAppErrorReporting()` captures `console.error`, uncaught window errors, and unhandled
   promise rejections.

@@ -20,7 +20,7 @@ Solid or SQLite queries.
 
 ## Domain Events
 
-Text functions emit no events. Import orchestration records `ChapterSegmented` after persisted
+Text functions emit no events. Import orchestration publishes library-level lifecycle facts after
 sentence and paragraph projections are complete.
 
 ## Invariants

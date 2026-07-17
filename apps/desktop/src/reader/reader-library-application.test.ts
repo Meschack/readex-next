@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { createDomainEventDispatcher, type AnyDomainEvent } from "@sonelle/domain";
+import {
+  createDomainEvent,
+  createDomainEventDispatcher,
+  type AnyDomainEvent
+} from "@sonelle/domain";
 import { libraryImportNotice } from "@sonelle/library";
 import type { LibraryBookmarkDto } from "../library/library-contracts";
 import type { LibraryBookSummary } from "../library/library-models";
@@ -13,7 +17,7 @@ const book: LibraryBookSummary = {
   chapterCount: 1,
   sentenceCount: 1,
   lastChapterId: null,
-  lastSentenceIndex: 0
+  completedSentenceCount: 0
 };
 
 const document = {
@@ -35,6 +39,9 @@ describe("reader library application", () => {
   it("coordinates import facts and independent library projections through its interface", async () => {
     const dispatcher = createDomainEventDispatcher();
     const events: AnyDomainEvent[] = [];
+    dispatcher.subscribe("BookImportRequested", (event) => {
+      events.push(event);
+    });
     const books: string[][] = [];
     const opened: string[] = [];
     const notices: Array<string | null> = [];
@@ -44,10 +51,11 @@ describe("reader library application", () => {
     const stopOpenRequestListener = vi.fn();
     let handleOpenRequest: ((path: string) => Promise<void>) | undefined;
     const importFromPath = vi.fn().mockResolvedValue(document);
+    const listBooks = vi.fn(async () => [book]);
     const application = createReaderLibraryApplication(
       {
         catalog: {
-          list: async () => [book],
+          list: listBooks,
           open: async () => document
         },
         drops: { listen: async () => stopDropListener },
@@ -64,7 +72,6 @@ describe("reader library application", () => {
           delete: vi.fn()
         },
         eventDispatcher: dispatcher,
-        eventSink: { append: async (event) => void events.push(event as AnyDomainEvent) },
         friendlyError: () => "Library needs attention"
       },
       {
@@ -93,6 +100,17 @@ describe("reader library application", () => {
     expect(books).toEqual([["book-1"]]);
     expect(notices[notices.length - 1]).toBe(libraryImportNotice("reopened"));
     expect(importing).toEqual([true, false]);
+
+    listBooks.mockClear();
+    await dispatcher.dispatch(
+      createDomainEvent("ReaderClosed", {
+        bookId: "book-1",
+        chapterId: "chapter-1",
+        sentenceId: "sentence-1"
+      })
+    );
+    expect(listBooks).toHaveBeenCalledOnce();
+
     stop();
     expect(stopDropListener).toHaveBeenCalledOnce();
     expect(stopOpenRequestListener).toHaveBeenCalledOnce();

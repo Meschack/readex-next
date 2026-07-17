@@ -37,14 +37,13 @@ updates refresh the current book's voice field immediately; the UI does not poll
 
 ## Domain Events
 
-The durable lifecycle includes `NarrationPlaybackRequested`, `NarrationPreparationStarted`,
+The published lifecycle includes `NarrationPlaybackRequested`, `NarrationPreparationStarted`,
 `PassageNarrationReady`, `NarrationSentenceEntered`, `PassageNarrationPlaybackEnded`,
 `NarrationPlaybackPaused`, `NarrationPlaybackEnded`, `NarrationPlaybackFailed`,
 `NarrationResetRequested`, and the upcoming-chapter preparation events.
 
-Reader projections react synchronously to these facts. Durable event-journal writes run through an
-ordered background observer: storage latency and storage diagnostics never delay prepared audio or
-become playback control flow.
+Reader projections react synchronously to these facts. Narration events are not written to SQLite,
+so storage latency cannot enter playback control flow.
 
 Prepared-audio maintenance is scoped to the active book. Manifest assets persist their book and
 chapter ownership; cached manifests from older builds acquire that ownership when reused without
@@ -52,9 +51,8 @@ regenerating audio. The legacy Piper rollback cache records a small book-ownersh
 entry is prepared or reused. Stats and clearing exclude unowned legacy entries rather than
 misrepresenting library-wide data as belonging to the open book.
 
-Voice and narration-file installation use requested, ready, and failed facts. Progress events and
-`NarrationSettingsChanged` are explicitly transient because they are live projections rather than
-replayable business history.
+Voice and narration-file installation use requested, progress, ready, and failed facts.
+`NarrationSettingsChanged` coordinates settings reactions through the same in-process dispatcher.
 
 ## Invariants
 

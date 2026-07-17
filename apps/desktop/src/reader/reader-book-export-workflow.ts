@@ -1,5 +1,4 @@
 import { createDomainEvent, type DomainEvent, type DomainEventDispatcher } from "@sonelle/domain";
-import type { EventSink } from "@sonelle/storage";
 import type { BookExporter, LibraryBookmarkDto } from "../library/library-contracts";
 import { createSampleExport, downloadJson } from "./reader-export";
 import { slugify } from "./reader-formatting";
@@ -7,7 +6,6 @@ import type { ReaderView } from "./reader-view";
 
 interface ReaderBookExportWorkflowDependencies {
   eventDispatcher: DomainEventDispatcher;
-  eventSink: EventSink;
   exporter: BookExporter;
   download?(fileName: string, data: unknown): void;
   friendlyError(error: unknown): string;
@@ -80,13 +78,7 @@ export function createReaderBookExportWorkflow(
     },
     start() {
       const subscriptions = [
-        dependencies.eventDispatcher.subscribe("BookExportRequested", (event) =>
-          dependencies.eventSink.append(event)
-        ),
         dependencies.eventDispatcher.subscribe("BookExportRequested", exportBook),
-        dependencies.eventDispatcher.subscribe("BookExported", (event) =>
-          dependencies.eventSink.append(event)
-        ),
         dependencies.eventDispatcher.subscribe("BookExported", (event) => {
           if (event.payload.fileName != null) {
             options.projectNotice(
@@ -94,9 +86,6 @@ export function createReaderBookExportWorkflow(
             );
           }
         }),
-        dependencies.eventDispatcher.subscribe("BookExportFailed", (event) =>
-          dependencies.eventSink.append(event)
-        ),
         dependencies.eventDispatcher.subscribe("BookExportFailed", (event) =>
           options.projectNotice(event.payload.reason)
         )

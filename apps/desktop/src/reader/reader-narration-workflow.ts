@@ -5,7 +5,6 @@ import type {
 } from "@sonelle/audio/narration";
 import type { AudioSettings } from "@sonelle/audio";
 import { createDomainEvent, type DomainEvent, type DomainEventDispatcher } from "@sonelle/domain";
-import type { EventSink } from "@sonelle/storage";
 import type { ReaderView } from "./reader-view";
 import { createReaderNarrationSessionChapter } from "./reader-narration";
 import type {
@@ -32,7 +31,6 @@ export interface ReaderNarrationWorkflowOptions {
 
 interface ReaderNarrationWorkflowDependencies {
   eventDispatcher: DomainEventDispatcher;
-  eventSink: EventSink;
   prefetchWorkflow: ReaderNarrationPrefetchWorkflow;
   routingMode: NarrationRoutingMode;
   session: NarrationSession;
@@ -51,7 +49,6 @@ export function createReaderNarrationWorkflow(
   dependencies: ReaderNarrationWorkflowDependencies,
   options: ReaderNarrationWorkflowOptions
 ): ReaderNarrationWorkflow {
-  const persistEvent = createBackgroundEventPersistence(dependencies.eventSink, options);
   const publish = async (event: Parameters<DomainEventDispatcher["dispatch"]>[0]) => {
     try {
       await dependencies.eventDispatcher.dispatch(event);
@@ -128,7 +125,6 @@ export function createReaderNarrationWorkflow(
     start() {
       const stopPrefetch = dependencies.prefetchWorkflow.start();
       const subscriptions = [
-        dependencies.eventDispatcher.subscribe("NarrationPlaybackRequested", persistEvent),
         dependencies.eventDispatcher.subscribe("NarrationPlaybackRequested", () => {
           options.projectNotice(null);
         }),
@@ -136,7 +132,6 @@ export function createReaderNarrationWorkflow(
           "NarrationPlaybackRequested",
           handlePlaybackRequested
         ),
-        dependencies.eventDispatcher.subscribe("NarrationPreparationStarted", persistEvent),
         dependencies.eventDispatcher.subscribe("NarrationPreparationStarted", (event) => {
           const reader = options.currentReader();
           if (
@@ -146,40 +141,33 @@ export function createReaderNarrationWorkflow(
             options.projectPreparing(true);
           }
         }),
-        dependencies.eventDispatcher.subscribe("PassageNarrationReady", persistEvent),
         dependencies.eventDispatcher.subscribe("PassageNarrationReady", () =>
           options.projectPreparing(false)
         ),
-        dependencies.eventDispatcher.subscribe("NarrationSentenceEntered", persistEvent),
         dependencies.eventDispatcher.subscribe("NarrationSentenceEntered", (event) => {
           options.projectPreparing(false);
           options.projectAudible(true);
           options.projectPlayback(event);
         }),
-        dependencies.eventDispatcher.subscribe("PassageNarrationPlaybackEnded", persistEvent),
         dependencies.eventDispatcher.subscribe("PassageNarrationPlaybackEnded", () => {
           options.projectPreparing(false);
           options.projectAudible(false);
         }),
-        dependencies.eventDispatcher.subscribe("NarrationPlaybackPaused", persistEvent),
         dependencies.eventDispatcher.subscribe("NarrationPlaybackPaused", (event) => {
           options.projectPreparing(false);
           options.projectAudible(false);
           options.projectPlayback(event);
         }),
-        dependencies.eventDispatcher.subscribe("NarrationPlaybackEnded", persistEvent),
         dependencies.eventDispatcher.subscribe("NarrationPlaybackEnded", (event) => {
           options.projectPreparing(false);
           options.projectAudible(false);
           options.projectPlayback(event);
         }),
-        dependencies.eventDispatcher.subscribe("NarrationPlaybackFailed", persistEvent),
         dependencies.eventDispatcher.subscribe("NarrationPlaybackFailed", (event) => {
           options.projectPreparing(false);
           options.projectAudible(false);
           options.projectPlayback(event);
         }),
-        dependencies.eventDispatcher.subscribe("NarrationResetRequested", persistEvent),
         dependencies.eventDispatcher.subscribe("NarrationResetRequested", () => {
           dependencies.prefetchWorkflow.reset();
         }),
@@ -208,19 +196,6 @@ export function createReaderNarrationWorkflow(
         subscriptions.forEach((unsubscribe) => unsubscribe());
       };
     }
-  };
-}
-
-function createBackgroundEventPersistence(
-  eventSink: EventSink,
-  options: ReaderNarrationWorkflowOptions
-) {
-  let pending = Promise.resolve();
-
-  return (event: Parameters<EventSink["append"]>[0]): void => {
-    pending = pending
-      .then(() => eventSink.append(event))
-      .catch((error) => reportErrorSafely(options, error, "playback", "unknown"));
   };
 }
 
