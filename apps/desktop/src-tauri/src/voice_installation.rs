@@ -512,22 +512,34 @@ fn copy_windows_runtime_files(app: &AppHandle, destination: &Path) -> Result<(),
     let resource_dir = app
         .path()
         .resource_dir()
-        .map_err(|_| "Sonelle couldn't open its bundled voice support.".to_string())?
-        .join("windows-runtime");
-    let files = [
-        "msvcp140.dll",
-        "msvcp140_1.dll",
-        "vcruntime140.dll",
-        "vcruntime140_1.dll",
-    ];
-    for file in files {
-        let source = resource_dir.join(file);
+        .map_err(|_| "Sonelle couldn't open its bundled voice support.".to_string())?;
+    let runtime_dir = windows_runtime_resource_dir(&resource_dir);
+    for file in WINDOWS_RUNTIME_FILES {
+        let source = runtime_dir.join(file);
         if source.exists() {
             fs::copy(source, destination.join(file))
                 .map_err(|_| "Sonelle couldn't prepare its bundled voice support.".to_string())?;
         }
     }
     Ok(())
+}
+
+const WINDOWS_RUNTIME_FILES: [&str; 4] = [
+    "msvcp140.dll",
+    "msvcp140_1.dll",
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+];
+
+fn windows_runtime_resource_dir(resource_dir: &Path) -> PathBuf {
+    if WINDOWS_RUNTIME_FILES
+        .iter()
+        .all(|file| resource_dir.join(file).is_file())
+    {
+        resource_dir.to_path_buf()
+    } else {
+        resource_dir.join("windows-runtime")
+    }
 }
 
 #[cfg(unix)]
@@ -664,7 +676,8 @@ fn emit_progress(
 mod tests {
     use super::{
         download_verified_file, extract_runtime, file_sha256, runtime_download, voice_urls,
-        InstallationProgress, RuntimeArchiveKind, VoiceDownloadClient,
+        windows_runtime_resource_dir, InstallationProgress, RuntimeArchiveKind,
+        VoiceDownloadClient, WINDOWS_RUNTIME_FILES,
     };
     use std::{fs, io::Write, path::PathBuf, time::SystemTime};
     use zip::{write::SimpleFileOptions, ZipWriter};
@@ -709,6 +722,28 @@ mod tests {
         assert!(runtime.file_name.starts_with("piper_"));
         assert_eq!(runtime.sha256.len(), 64);
         assert!(runtime.size_bytes > 10 * 1024 * 1024);
+    }
+
+    #[test]
+    fn finds_windows_runtime_files_beside_the_application() {
+        let root = test_path("app-local-windows-runtime");
+        fs::create_dir_all(&root).expect("create fixture folder");
+        for file in WINDOWS_RUNTIME_FILES {
+            fs::write(root.join(file), b"runtime").expect("write runtime fixture");
+        }
+
+        assert_eq!(windows_runtime_resource_dir(&root), root);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn supports_the_previous_windows_runtime_resource_folder() {
+        let root = test_path("legacy-windows-runtime");
+
+        assert_eq!(
+            windows_runtime_resource_dir(&root),
+            root.join("windows-runtime")
+        );
     }
 
     #[test]

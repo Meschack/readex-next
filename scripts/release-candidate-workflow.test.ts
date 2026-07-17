@@ -21,6 +21,29 @@ describe("release candidate workflow", () => {
     expect(candidate).toContain("node scripts/prepare-release-version.mjs");
     expect(candidate).toContain("steps.version.outputs.tag");
   });
+
+  it("packages the Windows C++ runtime beside the application executable", () => {
+    const windowsConfig = JSON.parse(
+      readFileSync(
+        join(repoRoot, "apps", "desktop", "src-tauri", "tauri.windows.conf.json"),
+        "utf8"
+      )
+    );
+    const stagingScript = readFileSync(
+      join(repoRoot, "scripts", "stage-windows-voice-runtime.ps1"),
+      "utf8"
+    );
+
+    expect(windowsConfig.bundle.resources["resources/windows-runtime/"]).toBe("");
+    for (const file of [
+      "msvcp140.dll",
+      "msvcp140_1.dll",
+      "vcruntime140.dll",
+      "vcruntime140_1.dll"
+    ]) {
+      expect(stagingScript).toContain(`"${file}"`);
+    }
+  });
 });
 
 function workflow(name: string): string {

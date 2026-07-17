@@ -21,8 +21,10 @@ configuration hashes live beside the shared voice catalog. Downloads use tempora
 renamed only after their expected SHA-256 digest is verified.
 
 Windows releases bundle the small Microsoft C++ runtime files needed by the downloaded Piper
-executable. They are deployed app-locally; Sonelle does not ask users to install system software or
-run an elevated installer.
+executable and Sonelle's native narration library. The files sit beside `sonelle.exe` so Windows can
+load the application on a clean system, then Sonelle copies the same files beside Piper when it
+prepares offline voice support. Sonelle does not ask users to install system software or run an
+elevated installer.
 
 ## Why
 
@@ -38,5 +40,6 @@ after preparation completes.
 - The first voice preparation requires an internet connection and roughly 80-90 MB of data.
 - Additional voices reuse the installed desktop runtime and need only their model files.
 - Playback never silently substitutes a robotic system voice.
+- Sonelle release updates are responsible for delivering current Microsoft C++ runtime files.
 - Removing installed voices and cancelling active downloads remain future work.
 - Mobile narration continues to use its platform adapter and does not use this desktop runtime.
